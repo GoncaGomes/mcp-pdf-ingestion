@@ -20,7 +20,11 @@ PLACEHOLDER = "<to fill"
 MATRIX_SECTION = "## Paper Quality Matrix"
 FORM_SECTION = "## Venue Review Form Answers"
 MATRIX_ROWS = (
-    "Novelty (None/Incremental/Novel)", "Technical Soundness", "Evaluation Rigor", "Clarity & Logic", "Impact"
+    "Novelty (None/Incremental/Novel)",
+    "Technical Soundness",
+    "Evaluation Rigor",
+    "Clarity & Logic",
+    "Impact",
 )
 MATRIX_FIELD_RE = re.compile(r"^\s*quality\s+matrix\s*:\s*(.+)$", re.IGNORECASE)
 
@@ -121,8 +125,10 @@ def submit(
     elif outcome["valid"]:
         reply["next"] = "Valid (dry run, not published). Call submit_report without dry_run to publish."
     else:
-        reply["next"] = ("Nothing was published. Fix single fields with update_report_field; resubmit the whole report "
-                         "with submit_report only for structural problems.")
+        reply["next"] = (
+            "Nothing was published. Fix single fields with update_report_field; resubmit the whole report "
+            "with submit_report only for structural problems."
+        )
     return reply
 
 

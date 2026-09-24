@@ -136,10 +136,10 @@ class TestChoiceWithExplanation(unittest.TestCase):
 
     def test_answers(self):
         good = [
-            "Satisfactory",                                     # no explanation asked for
+            "Satisfactory",  # no explanation asked for
             "Unsatisfactory. Three 2025 reviews of the same scope are missing.",
             "Unsatisfactory (explain) Three 2025 reviews are missing.",
-            "Satisfactory. The coverage is current.",           # an explanation is welcome anyway
+            "Satisfactory. The coverage is current.",  # an explanation is welcome anyway
         ]
         for answer in good:
             self.assertEqual(forms.answer_problems(self.field, answer), [], answer)
@@ -174,7 +174,9 @@ class TestValidator(unittest.TestCase):
             "Recommendation: Major Revision": ("Recommendation: Maybe", "exactly one of"),
             "Overall Rating (1-100): 55": ("Overall Rating (1-100): 150", "whole number from 1 to 100"),
             "Contribution type: Methodological, Evidence used, but could be improved": (
-                "Contribution type: Methodological and Philosophical", "one or more of"),
+                "Contribution type: Methodological and Philosophical",
+                "one or more of",
+            ),
             "The baselines [12] are weak.": ("Second.\n\nThird.\n\nFourth.", "has 4 paragraphs"),
             "Question 1: The subject is worthy of investigation: Agree": ("", "'Question 1: The subject is worthy"),
         }
@@ -203,10 +205,19 @@ class TestValidator(unittest.TestCase):
         for text in plain:
             self.assertEqual(plain_text_problem(text), "", text)
         not_plain = {
-            "list item": "Fine.\n- bullet", "bullet sign": "• bullet", "numbered line": "Intro.\n2) Second point.",
-            "numbered paragraph": "1. The baselines are weak.", "heading": "## Heading", "bold": "This is **bold**.",
-            "italic star": "This is *italic*.", "italic underscore": "This is _italic_.", "emoji": "Good 👍",
-            "dingbat": "Checked ✓", "html": "<b>bold</b>", "latex": "Use $x^2$ here.", "code": "code `x`",
+            "list item": "Fine.\n- bullet",
+            "bullet sign": "• bullet",
+            "numbered line": "Intro.\n2) Second point.",
+            "numbered paragraph": "1. The baselines are weak.",
+            "heading": "## Heading",
+            "bold": "This is **bold**.",
+            "italic star": "This is *italic*.",
+            "italic underscore": "This is _italic_.",
+            "emoji": "Good 👍",
+            "dingbat": "Checked ✓",
+            "html": "<b>bold</b>",
+            "latex": "Use $x^2$ here.",
+            "code": "code `x`",
             "table": "a | b",
         }
         for rule, text in not_plain.items():
@@ -221,13 +232,19 @@ class TestValidator(unittest.TestCase):
         emoji = self.errors(report(matrix=MATRIX.replace("| Impact | 3 | Checked. |", "| Impact | 3 | Checked ✅ |")))
         self.assertTrue(any("Quality Matrix row 'impact'" in e for e in emoji))
 
-    @unittest.skipUnless(REAL_WORKSPACE and (Path(REAL_WORKSPACE) / "forms").is_dir(),
-                         "set REVIEWER_WORKSPACE to a workspace with forms/")
+    @unittest.skipUnless(
+        REAL_WORKSPACE and (Path(REAL_WORKSPACE) / "forms").is_dir(),
+        "set REVIEWER_WORKSPACE to a workspace with forms/",
+    )
     def test_every_real_form_accepts_a_filled_skeleton(self):
         index = load_index(Path(REAL_WORKSPACE) / "forms", Path(REAL_WORKSPACE) / "base_review.md")
         self.assertEqual(index.problems, [])
-        example = {"choose": lambda f: f.options[-1], "choose any": lambda f: f.options[0],
-                   "scale": lambda f: str(f.high), "text": lambda f: "Plain answer."}
+        example = {
+            "choose": lambda f: f.options[-1],
+            "choose any": lambda f: f.options[0],
+            "scale": lambda f: str(f.high),
+            "text": lambda f: "Plain answer.",
+        }
         for venue_id in sorted(index.venues):
             fields = index.form_fields(venue_id)
             answers = "\n\n".join(

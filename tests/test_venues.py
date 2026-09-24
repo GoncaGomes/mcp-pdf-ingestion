@@ -58,9 +58,17 @@ class TestForms(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_parse_and_compose(self):
-        path = write_form(self.cdir, "ieee_t-ase", name="IEEE Transactions on Automation Science and Engineering",
-                               kind="journal", acronym="T-ASE", publisher="IEEE", aliases=["IEEE TASE"],
-                               identifiers=["T-ASE-#-#"], doi=["10.1109/TASE"])
+        path = write_form(
+            self.cdir,
+            "ieee_t-ase",
+            name="IEEE Transactions on Automation Science and Engineering",
+            kind="journal",
+            acronym="T-ASE",
+            publisher="IEEE",
+            aliases=["IEEE TASE"],
+            identifiers=["T-ASE-#-#"],
+            doi=["10.1109/TASE"],
+        )
         venue_form = parse_venue_form(path)
         self.assertEqual(venue_form.venue_id, "ieee_t-ase")
         self.assertEqual(venue_form.identifiers, ("T-ASE-#-#",))
@@ -83,11 +91,18 @@ class TestForms(unittest.TestCase):
         self.assertEqual([field.label for field in read_fields(venue_form)], ["Decision"])
 
     def test_context_sentence_by_kind(self):
-        publisher = parse_venue_form(write_form(self.cdir, "springer_nature", name="Springer Nature",
-                                                    kind="publisher"))
+        publisher = parse_venue_form(write_form(self.cdir, "springer_nature", name="Springer Nature", kind="publisher"))
         self.assertIn("shared by all Springer Nature journals", compose_guideline(BASE, publisher))
-        platform = parse_venue_form(write_form(self.cdir, "insticc", name="PRIMORIS", kind="platform",
-                                                   publisher="INSTICC", extra="Reviews are for workshops."))
+        platform = parse_venue_form(
+            write_form(
+                self.cdir,
+                "insticc",
+                name="PRIMORIS",
+                kind="platform",
+                publisher="INSTICC",
+                extra="Reviews are for workshops.",
+            )
+        )
         guideline = compose_guideline(BASE, platform)
         self.assertIn("on the PRIMORIS platform (operated by INSTICC)", guideline)
         self.assertIn("name from the manuscript.\n\nReviews are for workshops.", guideline)
@@ -108,8 +123,10 @@ class TestForms(unittest.TestCase):
             "free_text_form": ("VENUE:\nname: X\nkind: journal\n---\nFORM:\nQ1 [Yes, No]\n", "needs one of"),
             "bad_key_form": ("VENUE:\nname: X\nkind: journal\n---\nFORM:\nQ1\n  pick: A | B\n", "not a label"),
             "bad_scale": ("VENUE:\nname: X\nkind: journal\n---\nFORM:\nQ1\n  scale: 5-1\n", "scale: low-high"),
-            "twice_form": ("VENUE:\nname: X\nkind: journal\n---\nFORM:\nQ1\n  text: short sentence\n"
-                           "Q1\n  text: short sentence\n", "defined twice"),
+            "twice_form": (
+                "VENUE:\nname: X\nkind: journal\n---\nFORM:\nQ1\n  text: short sentence\nQ1\n  text: short sentence\n",
+                "defined twice",
+            ),
         }
         for venue_id, (content, message) in cases.items():
             path = self.cdir / f"{venue_id}.md"
@@ -143,15 +160,41 @@ class TestVenueIndex(unittest.TestCase):
         self.cdir.mkdir()
         self.base = self.root / "base_review.md"
         self.base.write_text(BASE, encoding="utf-8")
-        write_form(self.cdir, "ieee_access", name="IEEE Access", kind="journal", publisher="IEEE",
-                        identifiers=["Access-#-#"], doi=["10.1109/ACCESS"])
-        write_form(self.cdir, "ieee_tvt", name="IEEE Transactions on Vehicular Technology", kind="journal",
-                        acronym="TVT", identifiers=["VT-#-#"], doi=["10.1109/TVT"])
-        write_form(self.cdir, "elsevier_jii", name="Journal of Industrial Information Integration",
-                        kind="journal", acronym="JII", identifiers=["JII-D-#-#"])
+        write_form(
+            self.cdir,
+            "ieee_access",
+            name="IEEE Access",
+            kind="journal",
+            publisher="IEEE",
+            identifiers=["Access-#-#"],
+            doi=["10.1109/ACCESS"],
+        )
+        write_form(
+            self.cdir,
+            "ieee_tvt",
+            name="IEEE Transactions on Vehicular Technology",
+            kind="journal",
+            acronym="TVT",
+            identifiers=["VT-#-#"],
+            doi=["10.1109/TVT"],
+        )
+        write_form(
+            self.cdir,
+            "elsevier_jii",
+            name="Journal of Industrial Information Integration",
+            kind="journal",
+            acronym="JII",
+            identifiers=["JII-D-#-#"],
+        )
         write_form(self.cdir, "sparcly", name="Sparcly", kind="platform")
-        write_form(self.cdir, "springer_nature", name="Springer Nature", kind="publisher",
-                        aliases=["Springer"], doi=["10.1007"])
+        write_form(
+            self.cdir,
+            "springer_nature",
+            name="Springer Nature",
+            kind="publisher",
+            aliases=["Springer"],
+            doi=["10.1007"],
+        )
         self.index = load_index(self.cdir, self.base)
 
     def tearDown(self):
@@ -207,8 +250,11 @@ class TestVenueIndex(unittest.TestCase):
         self.assertEqual((r["status"], r["venue_id"]), ("resolved", "ieee_access"))
 
     def test_platform_takes_precedence_over_journal_template(self):
-        r = self.index.resolve(profile(stamps=[("header", "IEEE Transactions on Vehicular Technology"),
-                                               ("footer", "Submitted via Sparcly")]))
+        r = self.index.resolve(
+            profile(
+                stamps=[("header", "IEEE Transactions on Vehicular Technology"), ("footer", "Submitted via Sparcly")]
+            )
+        )
         self.assertEqual((r["status"], r["venue_id"], r["kind"]), ("resolved", "sparcly", "platform"))
         self.assertTrue(r["conflicts"])
 
@@ -217,8 +263,9 @@ class TestVenueIndex(unittest.TestCase):
         self.assertEqual(self.index.resolve(profile(dois=["10.1007/s10479-024-1"]))["venue_id"], "springer_nature")
 
     def test_two_journals_are_ambiguous(self):
-        r = self.index.resolve(profile(stamps=[("header", "IEEE Access"),
-                                               ("footer", "Journal of Industrial Information Integration")]))
+        r = self.index.resolve(
+            profile(stamps=[("header", "IEEE Access"), ("footer", "Journal of Industrial Information Integration")])
+        )
         self.assertEqual(r["status"], "ambiguous")
         self.assertEqual([c["venue_id"] for c in r["candidates"]], ["elsevier_jii", "ieee_access"])
 
@@ -238,24 +285,29 @@ class TestVenueIndex(unittest.TestCase):
 
     def test_body_text_never_selects_a_venue(self):
         pdf = self.root / "paper.pdf"
-        make_pdf(pdf, body="Multiple access algorithms, statistical tests, Springer Nature, IEEE Access, Sparcly\n"
-                           "Submitted to IEEE Transactions on Vehicular Technology last year\n"
-                           "Journal of Industrial Information Integration papers\n"
-                           "Conference Sparcly workflows")
+        make_pdf(
+            pdf,
+            body="Multiple access algorithms, statistical tests, Springer Nature, IEEE Access, Sparcly\n"
+            "Submitted to IEEE Transactions on Vehicular Technology last year\n"
+            "Journal of Industrial Information Integration papers\n"
+            "Conference Sparcly workflows",
+        )
         self.assertEqual(self.index.resolve(build_profile(pdf))["status"], "unresolved")
 
     def test_labelled_cover_fields_are_stamps(self):
         pdf = self.root / "cover.pdf"
-        make_pdf(pdf, body="Journal: Journal of Industrial Information Integration\n"
-                           "Manuscript submitted to IEEE Access")
+        make_pdf(
+            pdf, body="Journal: Journal of Industrial Information Integration\nManuscript submitted to IEEE Access"
+        )
         texts = [s["text"] for s in build_profile(pdf)["stamps"]]
         self.assertIn("Journal: Journal of Industrial Information Integration", texts)
         self.assertIn("Manuscript submitted to IEEE Access", texts)
 
     def test_profile_reads_margins_and_dois(self):
         pdf = self.root / "proof.pdf"
-        make_pdf(pdf, header="For consideration in IEEE Access", body="Body text",
-                 footer="DOI 10.1109/ACCESS.2024.0429000")
+        make_pdf(
+            pdf, header="For consideration in IEEE Access", body="Body text", footer="DOI 10.1109/ACCESS.2024.0429000"
+        )
         prof = build_profile(pdf)
         self.assertIn("For consideration in IEEE Access", [s["text"] for s in prof["stamps"]])
         self.assertEqual(prof["dois"][0]["doi"], "10.1109/ACCESS.2024.0429000")
@@ -264,8 +316,9 @@ class TestVenueIndex(unittest.TestCase):
         self.assertEqual(self.index.resolve(prof)["venue_id"], "ieee_access")
 
 
-@unittest.skipUnless(REAL_WORKSPACE and (Path(REAL_WORKSPACE) / "forms").is_dir(),
-                     "set REVIEWER_WORKSPACE to a workspace with forms/")
+@unittest.skipUnless(
+    REAL_WORKSPACE and (Path(REAL_WORKSPACE) / "forms").is_dir(), "set REVIEWER_WORKSPACE to a workspace with forms/"
+)
 class TestRealWorkspace(unittest.TestCase):
     def setUp(self):
         root = Path(REAL_WORKSPACE)

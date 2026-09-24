@@ -174,8 +174,10 @@ def read_pages(
         returned = reading.pages_returned(store, bool(omission))
         unread = next((page for page in range(first, last + 1) if page not in returned), None)
         if unread is None:
-            return (f"Pages {page_span(first, last)} were already returned in this review. Use search_paper or "
-                    "read_section to check a detail and get_asset for a numbered item.")
+            return (
+                f"Pages {page_span(first, last)} were already returned in this review. Use search_paper or "
+                "read_section to check a detail and get_asset for a numbered item."
+            )
         first = unread
     text, pages = reading.read_pages(store, first, last, offset, scope, omission)
     reading.record_returned(store, pages, bool(omission))
@@ -254,8 +256,12 @@ def list_assets(
     shown = [a for a in everything if (a["kind"] == kind if kind else a["kind"] != "reference")]
     items = []
     for item in shown:
-        entry: dict[str, Any] = {"id": item["id"], "label": item["label"],
-                                 "page": page_span(item["page"], item["last_page"]), "cited": item["cited"]}
+        entry: dict[str, Any] = {
+            "id": item["id"],
+            "label": item["label"],
+            "page": page_span(item["page"], item["last_page"]),
+            "cited": item["cited"],
+        }
         preview = " ".join((item["caption"] or item["content"]).split())
         if preview:
             entry["caption"] = preview[:CAPTION_PREVIEW]
@@ -316,9 +322,15 @@ def get_asset(
     if found["id"] in inspected and not include_image:
         return [TextContent(type="text", text=f"{found['id']} was already returned in this review.")]
     if found["id"] not in inspected and len(inspected) >= budget:
-        return [TextContent(type="text", text=(
-            f"The budget of {budget} items per review is used ({', '.join(inspected)}). Rely on the list_assets "
-            "captions and search_paper for other items."))]
+        return [
+            TextContent(
+                type="text",
+                text=(
+                    f"The budget of {budget} items per review is used ({', '.join(inspected)}). Rely on the list_assets "
+                    "captions and search_paper for other items."
+                ),
+            )
+        ]
     mentions = found["mentions"]
     paragraphs: dict[int, str] = {}
     for page_no in sorted({m["page"] for m in mentions[:MENTION_ITEMS]}):

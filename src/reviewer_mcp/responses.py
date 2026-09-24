@@ -75,9 +75,11 @@ def author_responses(store: PaperStore, reviewer: int | None, query: str | None)
     status = f"Author responses, pages {page_span(first, last)}; reviewers present: {reviewers}"
     if reviewer is None and not query:
         opening, _, _ = _text(paragraphs[: marks[0][0] if marks else len(paragraphs)], OPENING_BUDGET)
-        guide = ("Letter opening below; filter with reviewer=<number> or query=<text> instead of reading the letter "
-                 "pages. Verify every claimed change in the manuscript with search_paper or read_section; do not trust "
-                 "the letter alone.")
+        guide = (
+            "Letter opening below; filter with reviewer=<number> or query=<text> instead of reading the letter "
+            "pages. Verify every claimed change in the manuscript with search_paper or read_section; do not trust "
+            "the letter alone."
+        )
         return f"{status}. {guide}\n\n{opening}"
 
     selected = paragraphs

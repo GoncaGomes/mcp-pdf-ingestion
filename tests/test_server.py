@@ -19,8 +19,17 @@ from reviewer_mcp.papers import ASSETS_KEY
 from reviewer_mcp.store import PaperStore, close_all
 
 TOOLS = {
-    "get_paper_overview", "set_manuscript_pages", "read_pages", "read_section", "search_paper",
-    "get_author_responses", "list_assets", "get_asset", "get_review_guideline", "submit_report", "update_report_field",
+    "get_paper_overview",
+    "set_manuscript_pages",
+    "read_pages",
+    "read_section",
+    "search_paper",
+    "get_author_responses",
+    "list_assets",
+    "get_asset",
+    "get_review_guideline",
+    "submit_report",
+    "update_report_field",
 }
 READERS = ("get_paper_overview", "read_pages", "read_section", "search_paper", "get_author_responses", "list_assets")
 SCHEMA_BUDGET = 9_200  # characters of the tool list the model receives (names, descriptions, parameters), ~2.5k tokens
@@ -60,7 +69,8 @@ class TestContract(ServerCase):
     def test_protocol_negotiated_over_stdio(self):
         async def negotiate(mode):
             transport = StdioTransport(
-                command=sys.executable, args=["-c", "from reviewer_mcp.server import main; main()"],
+                command=sys.executable,
+                args=["-c", "from reviewer_mcp.server import main; main()"],
                 env=dict(os.environ),
             )
             async with Client(transport, mode=mode) as client:

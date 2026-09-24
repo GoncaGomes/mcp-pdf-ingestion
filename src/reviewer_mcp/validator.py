@@ -69,6 +69,7 @@ PLAIN_TEXT_HINT = (
     "formulas as Unicode signs or MathML)."
 )
 
+
 def explicit_venue_id_from_report(report_text: str) -> str:
     """Extract the explicit 'Venue ID' value from the report metadata table."""
     m = re.search(r"venue\s*id\s*\**\s*[|:]\s*\**\s*([a-z0-9_\-]+)", report_text, re.I)

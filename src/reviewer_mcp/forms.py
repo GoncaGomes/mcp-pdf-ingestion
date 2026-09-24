@@ -121,16 +121,16 @@ class Field:
         return "; ".join(extra for extra in extras if extra)
 
 
-def _explained(values: dict[str, str], options: tuple[str, ...], label: str, line: int, source: str
-               ) -> tuple[str, ...]:
+def _explained(values: dict[str, str], options: tuple[str, ...], label: str, line: int, source: str) -> tuple[str, ...]:
     """Options the form requires an explanation after: every one for 'explain: always', else those it names.
     A name may leave out an option's printed aside, so 'explain: No' names the option 'No (explain)'."""
     spec = values.get("explain", "")
     if not spec:
         return ()
     if "text" not in values:
-        raise FormError(f"{source}: field {label!r} (line {line}) gives 'explain' without a 'text' size for the "
-                        f"explanation")
+        raise FormError(
+            f"{source}: field {label!r} (line {line}) gives 'explain' without a 'text' size for the explanation"
+        )
     if spec.casefold() in ALWAYS:
         return options
     named: list[str] = []
@@ -138,8 +138,10 @@ def _explained(values: dict[str, str], options: tuple[str, ...], label: str, lin
         folded = BRACKET_RE.sub("", wanted).casefold()
         match = next((option for option in options if BRACKET_RE.sub("", option).casefold() == folded), None)
         if match is None:
-            raise FormError(f"{source}: field {label!r} (line {line}) explains {wanted!r}, which is not one of its "
-                            f"options: {' | '.join(options)}")
+            raise FormError(
+                f"{source}: field {label!r} (line {line}) explains {wanted!r}, which is not one of its "
+                f"options: {' | '.join(options)}"
+            )
         named.append(match)
     return tuple(dict.fromkeys(named))
 
@@ -156,8 +158,10 @@ def parse_form(text: str, source: str) -> tuple[Field, ...]:
             return
         chosen = [kind for kind in CHOICES if kind in values]
         if len(chosen) > 1 or not (chosen or "text" in values):
-            raise FormError(f"{source}: field {label!r} (line {start}) needs one of {list(CHOICES)} or 'text', "
-                            f"and a choice may carry a 'text' size for the explanation after it")
+            raise FormError(
+                f"{source}: field {label!r} (line {start}) needs one of {list(CHOICES)} or 'text', "
+                f"and a choice may carry a 'text' size for the explanation after it"
+            )
         kind = chosen[0] if chosen else "text"
         size = values.get("text", "")
         if "text" in values and not size:
@@ -168,18 +172,35 @@ def parse_form(text: str, source: str) -> tuple[Field, ...]:
             options = tuple(option.strip() for option in spec.split("|") if option.strip())
             if len(options) < 2 and kind == "choose":
                 raise FormError(f"{source}: field {label!r} (line {start}) needs at least two options")
-            field = Field(label, kind, options, size=size, explain=_explained(values, options, label, start, source),
-                          help=help_text, optional=optional)
+            field = Field(
+                label,
+                kind,
+                options,
+                size=size,
+                explain=_explained(values, options, label, start, source),
+                help=help_text,
+                optional=optional,
+            )
         elif kind == "scale":
             match = SCALE_RE.match(spec)
             if not match or int(match.group(1)) >= int(match.group(2)):
                 raise FormError(f"{source}: field {label!r} (line {start}) needs 'scale: low-high', got {spec!r}")
-            field = Field(label, kind, low=int(match.group(1)), high=int(match.group(2)), size=size,
-                          explain=_explained(values, (), label, start, source), help=help_text, optional=optional)
+            field = Field(
+                label,
+                kind,
+                low=int(match.group(1)),
+                high=int(match.group(2)),
+                size=size,
+                explain=_explained(values, (), label, start, source),
+                help=help_text,
+                optional=optional,
+            )
         else:
             if "explain" in values:
-                raise FormError(f"{source}: field {label!r} (line {start}) is a text field, so 'explain' has "
-                                f"nothing to name; drop it")
+                raise FormError(
+                    f"{source}: field {label!r} (line {start}) is a text field, so 'explain' has "
+                    f"nothing to name; drop it"
+                )
             field = Field(label, kind, size=size, help=help_text, optional=optional)
         if values.get("optional", "no") not in ("yes", "no"):
             raise FormError(f"{source}: field {label!r} (line {start}) has 'optional' other than yes or no")
@@ -208,9 +229,7 @@ def parse_form(text: str, source: str) -> tuple[Field, ...]:
 
 def skeleton(fields: tuple[Field, ...]) -> str:
     """The form section of the report skeleton: every label with a placeholder for its answer."""
-    blocks = [
-        f"{field.label}:{chr(10) if field.kind == 'text' else ' '}<to fill: {field.hint()}>" for field in fields
-    ]
+    blocks = [f"{field.label}:{chr(10) if field.kind == 'text' else ' '}<to fill: {field.hint()}>" for field in fields]
     return "\n\n".join(blocks)
 
 
@@ -250,7 +269,7 @@ def _chosen(field: Field, answer: str) -> tuple[str, str] | None:
         for written in (option, BRACKET_RE.sub("", option).strip()):
             head = written.casefold()
             if folded.startswith(head) and (len(folded) == len(head) or not folded[len(head)].isalnum()):
-                return option, answer.strip()[len(written):].strip(" .:;,-\n")
+                return option, answer.strip()[len(written) :].strip(" .:;,-\n")
     return None
 
 
@@ -265,13 +284,14 @@ def answer_problems(field: Field, answer: str) -> list[str]:
     if field.kind == "choose" and field.explains:
         picked = _chosen(field, answer)
         if picked is None:
-            problems.append(f"Open the answer to {name} with one of: {' | '.join(field.options)} "
-                            f"(got {value[:60]!r}).")
+            problems.append(f"Open the answer to {name} with one of: {' | '.join(field.options)} (got {value[:60]!r}).")
         else:
             option, explanation = picked
             if not explanation and field.wants_explanation(option):
-                problems.append(f"The option {option!r} of {name} asks for an explanation; "
-                                f"write it after the option, {field.size} of it.")
+                problems.append(
+                    f"The option {option!r} of {name} asks for an explanation; "
+                    f"write it after the option, {field.size} of it."
+                )
             problems.extend(_size_problems(field, name, explanation))
     elif field.kind == "choose" and folded not in {option.casefold() for option in field.options}:
         problems.append(f"Answer {name} with exactly one of: {' | '.join(field.options)} (got {value[:60]!r}).")
@@ -299,8 +319,10 @@ def _size_problems(field: Field, name: str, text: str) -> list[str]:
     paragraphs = len([block for block in re.split(r"\n\s*\n", text) if block.strip()])
     if paragraphs <= field.max_paragraphs:
         return []
-    return [f"The answer to {name} has {paragraphs} paragraphs; the form asks for {field.size} "
-            f"(at most {field.max_paragraphs})."]
+    return [
+        f"The answer to {name} has {paragraphs} paragraphs; the form asks for {field.size} "
+        f"(at most {field.max_paragraphs})."
+    ]
 
 
 def labels_elsewhere(section: str, own: tuple[Field, ...], other_labels: set[str]) -> list[str]:
@@ -317,9 +339,6 @@ def labels_elsewhere(section: str, own: tuple[Field, ...], other_labels: set[str
         if label and not field_at(line, own):
             found.append(label)
     return [f"The field {label!r} belongs to another venue's form; remove it." for label in dict.fromkeys(found)]
-
-
-
 
 
 VENUE_KINDS = ("journal", "publisher", "platform")

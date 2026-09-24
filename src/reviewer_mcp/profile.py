@@ -73,9 +73,13 @@ def _cover_fields(lines: list[dict[str, Any]], page_no: int, stamps: _Stamps) ->
             continue
         if not text[m.end() :].strip(" :\t-"):
             row = sorted(
-                (other for other in lines
-                 if other is not line and other["x0"] >= line["x1"]
-                 and line["y0"] <= (other["y0"] + other["y1"]) / 2 <= line["y1"]),
+                (
+                    other
+                    for other in lines
+                    if other is not line
+                    and other["x0"] >= line["x1"]
+                    and line["y0"] <= (other["y0"] + other["y1"]) / 2 <= line["y1"]
+                ),
                 key=lambda other: other["x0"],
             )
             if row:

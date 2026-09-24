@@ -75,20 +75,32 @@ class TestFixtures(IsolatedTestCase):
             self.assertTrue(doc[4].get_images(), "figure page has an image")
             self.assertIn("Accuracy (%)", doc[4].get_text())
             self.assertGreaterEqual(len(doc[6].find_tables().tables), 1, "table page has a ruled table")
-            fonts = {span["font"] for block in doc[5].get_text("dict")["blocks"] for line in block.get("lines", [])
-                     for span in line["spans"]}
+            fonts = {
+                span["font"]
+                for block in doc[5].get_text("dict")["blocks"]
+                for line in block.get("lines", [])
+                for span in line["spans"]
+            }
             self.assertTrue(any("Symbol" in font for font in fonts), fonts)
-            sizes = {round(span["size"], 1) for block in doc[5].get_text("dict")["blocks"]
-                     for line in block.get("lines", []) for span in line["spans"]}
+            sizes = {
+                round(span["size"], 1)
+                for block in doc[5].get_text("dict")["blocks"]
+                for line in block.get("lines", [])
+                for span in line["spans"]
+            }
             self.assertIn(7.0, sizes, "sub/superscripts use a smaller size")
 
     def test_marked_copy_has_colour_and_highlights(self):
         path = build_fixture("scholarone_two_copies", self.tmp_path)
         with fitz.open(str(path)) as doc:
+
             def red_spans(page_no):
                 return sum(
-                    1 for block in doc[page_no - 1].get_text("dict")["blocks"] for line in block.get("lines", [])
-                    for span in line["spans"] if span["color"] != 0
+                    1
+                    for block in doc[page_no - 1].get_text("dict")["blocks"]
+                    for line in block.get("lines", [])
+                    for span in line["spans"]
+                    if span["color"] != 0
                 )
 
             def highlights(page_no):

@@ -79,7 +79,7 @@ def read_pages(
             cut = cut if cut > 0 else room
             chunks.append(f"{header}\n{text[:cut]}")
             read_last = number
-            next_cursor = f"p{number}@{start + cut + (1 if text[cut:cut + 1] == chr(10) else 0)}"
+            next_cursor = f"p{number}@{start + cut + (1 if text[cut : cut + 1] == chr(10) else 0)}"
             break
         chunks.append(block)
         returned.append(number)
