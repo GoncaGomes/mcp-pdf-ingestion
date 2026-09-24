@@ -9,15 +9,12 @@ from typing import Any
 
 PACKAGED_CONFIG = Path(__file__).with_name("config.json")
 
-# Default relative paths in the workspace root
-DEFAULT_BASE_REVIEW_PATH = Path("base_review.md")
-DEFAULT_FORMS_DIR = Path("forms")
+# Default relative path in the workspace root
 DEFAULT_PAPERS_DIR = Path("papers")
-DEFAULT_REPORTS_DIR = Path("reports")
 
 
 def workspace() -> Path:
-    """Workspace root holding base_review.md, forms/, papers/ and reports/.
+    """Workspace root holding papers/.
 
     Read from REVIEWER_WORKSPACE on every call; defaults to the server's working directory.
     """

@@ -5,9 +5,9 @@ Read `AGENTS.md` and the selected task in `PLAN.md` before editing.
 
 ## Current work
 
-- Next task: **MCP-01**.
-- Active task: none.
-- Implementation started under this plan: no.
+- Active task: **MCP-01** — implemented 2026-09-24, `review_pending`.
+- Next task after acceptance: **MCP-02**.
+- Implementation started under this plan: yes (MCP-01).
 - The owner and planning chat prepared the documents; MCP-00 is not an implementation task.
 
 Statuses: `pending`, `in_progress`, `review_pending`, `done`, `blocked`.
@@ -29,7 +29,7 @@ been recorded under this plan.
 
 | ID | Deliverable | Status |
 | --- | --- | --- |
-| MCP-01 | Six neutral tools, no reviewer policy | pending |
+| MCP-01 | Six neutral tools, no reviewer policy | review_pending |
 | MCP-02 | One configured PDF and isolated run directory | pending |
 | MCP-03 | Repeatable, complete page reads | pending |
 | MCP-04 | Complete section reads by ID | pending |
@@ -49,7 +49,10 @@ after MCP-03; the coding agent does not modify that consumer repository.
 
 ## Blockers and external evidence
 
-- No known blocker to starting MCP-01; local baseline checks have not been run.
+- MCP-01 is implemented and awaiting owner review; no blocker.
+- Pre-existing Windows issues observed on this machine: chmod 0o700 is not
+  enforced (one `test_store` failure) and temporary-file locks during cleanup
+  are flaky; corpus/real-PDF tests skip without `REVIEWER_WORKSPACE`.
 - MCP-11B requires owner-selected model/configuration, a probe input and explicit
   authorization. Never put credential values in this file.
 - Real-paper checks require owner-supplied PDFs. Report unavailable cases as skipped.
@@ -65,6 +68,12 @@ after MCP-03; the coding agent does not modify that consumer repository.
 
 ## Resume note
 
-No code changes made. Start with MCP-01 after the owner installs these documents
-and assigns the task. Replace this note with the active task, relevant files,
-checks completed and the next concrete step when handing off an unfinished session.
+MCP-01 is implemented and `review_pending` (2026-09-24). Files:
+`src/reviewer_mcp/server.py`, `papers.py`, `config.py`; deleted reviewer-only
+`forms.py`, `profile.py`, `reports.py`, `responses.py`, `validator.py`, `venues.py`;
+rewrote `tests/test_server.py`, adapted `tests/test_fixtures.py`; deleted
+`tests/test_venues.py` and `tests/test_guidelines_validator.py`; updated
+`README.md`. Checks: full suite 51 tests (45 ok, 1 pre-existing Windows chmod
+failure, 5 corpus skips), ruff clean, basedpyright 0, vulture clean,
+`git diff --check` clean. Next: owner review of the working-tree diff and
+acceptance; the coding agent performs no Git operations.

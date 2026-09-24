@@ -1,8 +1,9 @@
 # reviewer-mcp
 
-An MCP (Model Context Protocol) server that lets an AI agent review one academic paper submission: it reads the PDF
-deterministically, exposes the manuscript through page, section, search and numbered-item tools, loads the venue
-guideline, and publishes a review report only when it passes validation.
+An MCP (Model Context Protocol) server that serves one academic paper PDF as evidence: it reads the PDF
+deterministically and exposes it through six neutral tools — document overview, page and section reads, search, and
+numbered-item listing and retrieval. It does not select content, synthesise conclusions or validate scientific claims;
+the consuming agent decides what to read and how to use it.
 
 ## Key Features
 
@@ -20,42 +21,34 @@ guideline, and publishes a review report only when it passes validation.
   table ruled on every row behave alike. Items report a page span (`"15-16"`).
 * **Layout rules relative to each document**: tolerances are factors of the measured body size and line height
   (`src/reviewer_mcp/config.json`, overridable with `REVIEWER_CONFIG`).
-* **Submission structure**: cover pages, manuscript copies, letters and author responses; the copy under review and
-  the review round, each with evidence.
-* **Venue from metadata only**: file name, PDF metadata, running heads/footers, labelled cover fields and DOIs; the
-  guideline is composed on demand from `base_review.md` and `forms/`. A form field takes one choice (`choose`,
-  `choose any`, `scale`) or `text`, and a choice may carry a `text` size for the explanation after it, with `explain`
-  naming the options that must carry one (`explain: No`, `explain: always`).
-* **Valid reports only**: `submit_report` validates against the venue form and publishes `reports/<stem>_Report.md`
-  only when the report passes; `update_report_field` fixes single fields of the draft.
 * **No files exposed**: tools take the PDF file name and PDF page numbers; no scratch paths in any reply.
 * **MCP protocol `2026-07-28`**, negotiated natively by fastmcp 4.
 
-## Tools (11)
+## Tools (6)
 
-1. `get_paper_overview` — start here: parts, manuscript pages, round, outline, numbered items, venue.
-2. `set_manuscript_pages` — correct the manuscript range when the wrong copy was chosen.
-3. `read_pages` — whole pages with a continuation cursor (primary reader); pages already returned in the review are
-   not sent again.
-4. `read_section` — one outline section by heading.
-5. `search_paper` — where a term is mentioned (page, section, snippet).
-6. `get_author_responses` — reviewers and comment/answer items of the response letter (revisions); each paragraph
-   once per review, so repeating a filter continues a truncated reply.
-7. `list_assets` — numbered items with pages and citation counts.
-8. `get_asset` — one item as text (caption, Markdown table, equation text, algorithm lines, reference) plus citing
+1. `get_paper_overview` — start here: document identity, page count, extracted title when one is found, the full-PDF
+   outline with section ids, numbered-item counts and extraction warnings.
+2. `read_pages` — whole pages with a continuation cursor (primary reader); pages already returned since the last
+   `get_paper_overview` are not sent again.
+3. `read_section` — one outline section by heading.
+4. `search_paper` — where a term is mentioned (page, section, snippet).
+5. `list_assets` — numbered items with pages and citation counts.
+6. `get_asset` — one item as text (caption, Markdown table, equation text, algorithm lines, reference) plus citing
    sentences, optionally a cropped image when the `images` settings of `config.json` enable it (off by default); at
-   most `replies.asset_budget` (6) items per review, each once.
-9. `get_review_guideline` — review criteria, or the report skeleton with the verbatim venue form (`form_only`).
-10. `submit_report` — validate and publish only a valid report.
-11. `update_report_field` — replace one answer or matrix score in the draft and re-validate.
+   most `replies.asset_budget` (6) items per overview, each once.
+
+This is the current behaviour. The readers still default to the detected manuscript part, and the asset/image budgets
+still apply. Binding one configured PDF and run directory per server, whole-PDF reads by default, unambiguous asset
+ids and explicit visual questions in `get_asset` come in the later tasks of `PLAN.md` (MCP-02 onward); the intermediate
+states are described there, not assumed here.
 
 ## Environment
 
-* `REVIEWER_WORKSPACE` — directory with `papers/`, `forms/`, `base_review.md` and `reports/` (default: cwd).
+* `REVIEWER_WORKSPACE` — directory with `papers/` (default: cwd).
 * `REVIEWER_SCRATCH_BASE` — store location (default `/tmp/reviewer`).
 * `REVIEWER_CONFIG` — JSON file overriding values of `config.json`: layout factors (`heuristics`), image
   attachments (`images`: `enabled`, `budget`, `max_side`) and reply budgets (`replies`: `asset_budget`). A new
-  `get_paper_overview` starts a new review and restores every budget.
+  `get_paper_overview` starts a new reading session and restores every budget.
 
 ## Development
 

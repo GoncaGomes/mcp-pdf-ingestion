@@ -1,4 +1,4 @@
-"""Paper handles for the tools: the PDF named by the agent, its reviewer notes, parts, title and overview.
+"""Paper handles for the tools: the PDF named by the agent, its parts, title and overview.
 
 Tools address a paper by its file name in ``papers/``; a path is accepted but never returned. Page numbers are PDF page
 numbers everywhere.
@@ -16,23 +16,14 @@ from reviewer_mcp.heuristics import SAME_SIZE
 from reviewer_mcp.store import PaperStore
 
 # Reply budgets (characters or items), not layout heuristics.
-NOTES_BUDGET = 4000
 TITLE_BUDGET = 300
-EVIDENCE_ITEMS = 4
 IMAGES_KEY = "images_sent"
 ASSETS_KEY = "assets_returned"  # item ids get_asset returned in full during the current review
 PAGES_READ_KEY = "pages_returned"  # pages read_pages returned whole during the current review
-RESPONSES_KEY = "responses_returned"  # response-letter paragraph ids get_author_responses returned in this review
 
 
 class ReviewError(ValueError):
     """A request the agent can correct; the message says how."""
-
-
-def paper_stem(paper: str | Path) -> str:
-    """File name without the .pdf extension ('Access-2026-41373_Proof_hi.pdf' -> 'Access-2026-41373_Proof_hi')."""
-    name = Path(paper).name
-    return name[:-4] if name.lower().endswith(".pdf") else Path(name).stem
 
 
 def resolve_paper(paper: str) -> Path:
@@ -47,15 +38,6 @@ def resolve_paper(paper: str) -> Path:
         f"Paper {given.name[:120]!r} is not in papers/. Available papers: {available[:20]}. "
         "Pass the PDF file name exactly as given in the task."
     )
-
-
-def reviewer_notes(pdf: Path) -> str:
-    """Reviewer directives from papers/<stem>.notes, if present."""
-    notes = pdf.with_name(f"{paper_stem(pdf)}.notes")
-    if not notes.is_file():
-        return ""
-    text = notes.read_text(encoding="utf-8", errors="replace").strip()
-    return text if len(text) <= NOTES_BUDGET else text[:NOTES_BUDGET] + " [notes truncated]"
 
 
 def page_span(first: int, last: int) -> str:
@@ -98,60 +80,25 @@ def title(store: PaperStore) -> str:
     return " ".join(selected)[:TITLE_BUDGET]
 
 
-def overview(store: PaperStore, pdf: Path, venue: dict[str, Any]) -> dict[str, Any]:
-    """Everything the agent needs to plan the review, in PDF page numbers."""
-    first, last = part_range(store, "manuscript")
-    structure = store.structure()
-    chosen = store.manuscript_pages()
-    manuscript: dict[str, Any] = {"pages": page_span(first, last), "source": chosen["source"]}
-    if chosen["source"] == "override":
-        manuscript["reason"] = chosen.get("reason", "")
-    else:
-        manuscript["confidence"] = structure.get("current_confidence", "")
-        manuscript["evidence"] = structure.get("current_evidence", [])[:EVIDENCE_ITEMS]
-    round_info: dict[str, Any] = {
-        "status": structure.get("round") or "unknown",
-        "confidence": structure.get("round_confidence", ""),
-        "evidence": structure.get("round_evidence", [])[:EVIDENCE_ITEMS],
-    }
-    if structure.get("round_label"):
-        round_info["label"] = structure["round_label"]
-    parts = []
-    for segment in store.segments():
-        entry: dict[str, Any] = {
-            "kind": segment["kind"],
-            "pages": page_span(segment["first_page"], segment["last_page"]),
-        }
-        if segment["label"]:
-            entry["label"] = segment["label"]
-        entry["evidence"] = segment["evidence"][:EVIDENCE_ITEMS]
-        parts.append(entry)
+def overview(store: PaperStore, pdf: Path) -> dict[str, Any]:
+    """Everything needed to plan the reading of the document, over the whole PDF, in PDF page numbers."""
     outline = [
-        f"{'  ' * (s['level'] - 1)}{s['number'] + ' ' if s['number'] else ''}{s['title']} (p{s['page']})"
+        {"id": s["id"], "level": s["level"], "number": s["number"], "title": s["title"], "page": s["page"]}
         for s in store.outline()
-        if first <= s["page"] <= last
     ]
-    assets = store.assets(first=first, last=last)
-    counts = Counter(a["kind"] for a in assets)
+    assets = store.assets()
     reply: dict[str, Any] = {
         "paper": pdf.name,
         "pdf_pages": store.page_count,
         "title": title(store),
-        "venue": venue,
-        "parts": parts,
-        "manuscript": manuscript,
-        "round": round_info,
-        "reviewer_notes": reviewer_notes(pdf),
         "outline": outline,
-        "numbered_items": dict(sorted(counts.items())),
-        "uncited_items": [a["id"] for a in assets if a["cited"] == 0 and a["kind"] != "reference"],
+        "numbered_items": dict(sorted(Counter(a["kind"] for a in assets).items())),
     }
     unreadable = [p["page"] for p in store.pages() if p["source"] == "none"]
     if unreadable:
         reply["warnings"] = [f"pages {unreadable} have no text layer (e.g. scanned images); their text cannot be read"]
-    # a new review starts with the full image and item budgets and may read every page again
+    # a new reading session starts with the full image and item budgets and may read every page again
     store.set_state(IMAGES_KEY, "0")
     store.set_state(ASSETS_KEY, "")
     store.set_state(PAGES_READ_KEY, "")
-    store.set_state(RESPONSES_KEY, "")
     return reply

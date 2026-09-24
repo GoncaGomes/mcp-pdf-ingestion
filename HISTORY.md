@@ -59,6 +59,48 @@ Validation: checked task order, one commit suggestion per task, and consistency 
 the documentation workflow. No code tests or probes were run for this edit. All
 implementation tasks remain pending; no implementation commits are claimed.
 
+## 2026-09-24 - MCP-01 - Expose six neutral PDF tools
+
+Status: review_pending
+
+Changed: `server.py` now registers exactly six tools (`get_paper_overview`,
+`read_pages`, `read_section`, `search_paper`, `list_assets`, `get_asset`) and all
+reviewer policy was removed from the tool instructions; the five reviewer tools
+(`set_manuscript_pages`, `get_author_responses`, `get_review_guideline`,
+`submit_report`, `update_report_field`) are no longer exposed.
+`papers.overview()` returns a whole-PDF outline with section IDs, whole-PDF asset
+counts, optional title and no-text-layer warnings; venue resolution, reviewer
+notes, the responses key and the notes budget were removed from `papers.py`.
+`config.py` lost the reviewer path constants. Deleted the reviewer-only modules
+`forms.py`, `profile.py`, `reports.py`, `responses.py`, `validator.py`, `venues.py`
+and their dedicated tests after confirming no remaining imports.
+`tests/test_server.py` rewritten for the six-tool contract; `tests/test_fixtures.py`
+adapted from profile/venues to `PaperStore` queries; `README.md` updated to describe
+the six tools and the intermediate state. Supporting edit: the `read_pages`
+annotation is now `destructiveHint: False, idempotentHint: True` because it still
+writes consumed-page state; the contract test therefore asserts read-only only for
+`read_section`, `search_paper`, `list_assets`. Retained per PLAN as intermediate
+state: readers default to the detected manuscript part, and the consumed-page,
+asset and image budgets (with their overview resets) remain.
+
+Validation: focused runs `python -m unittest discover -s tests -p "test_server.py"`
+(10 ok) and `-p "test_fixtures.py"` (6 ok); full suite 51 tests: 45 ok, 1 failure
+(pre-existing on this Windows machine: chmod 0o700 not enforced,
+`test_store_location_permissions_and_cache`), 5 skips (corpus/real-PDF tests without
+`REVIEWER_WORKSPACE`). `ruff check .` clean (the baseline E501 in `server.py` no
+longer applies after the rewrite). `basedpyright`: 0 errors, 0 warnings, 0 notes.
+`vulture`: clean. `git diff --check`: no whitespace errors. The pre-implementation
+baseline was 93 tests with 1 failure, 5 flaky Windows temp-lock errors and 8 skips;
+no new failures were introduced.
+
+Limitations: readers still default to the detected manuscript part and budgets
+still apply until later tasks; `get_paper_overview` and `get_asset` keep the
+inherited read-only hints while their budget-ledger writes remain; the one
+configured PDF per server, full-PDF read defaults and visual questions arrive in
+later tasks (MCP-02 onward).
+
+Next: owner review and acceptance of the working-tree diff.
+
 ## Entry format for future work
 
 Append one short entry per task attempt, using the actual date:

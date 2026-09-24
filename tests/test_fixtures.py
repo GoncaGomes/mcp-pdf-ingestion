@@ -3,10 +3,9 @@
 import unittest
 
 import pymupdf as fitz
-from pdf_fixtures import FIXTURES, IsolatedTestCase, build_fixture, write_workspace
+from pdf_fixtures import FIXTURES, IsolatedTestCase, build_fixture
 
-from reviewer_mcp.profile import build_profile
-from reviewer_mcp.venues import load_index
+from reviewer_mcp.store import PaperStore, close_all
 
 
 def page_texts(path):
@@ -20,6 +19,10 @@ def first_line(text):
 
 
 class TestFixtures(IsolatedTestCase):
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(close_all)
+
     def test_page_counts_file_names_and_specs(self):
         for name, spec in FIXTURES.items():
             path = build_fixture(name, self.tmp_path)
@@ -29,25 +32,29 @@ class TestFixtures(IsolatedTestCase):
             covered = [p for _, first, last in spec.segments for p in range(first, last + 1)]
             self.assertEqual(covered, list(range(1, spec.pages + 1)), f"{name}: segments must tile every page")
 
-    def test_venues_resolve_from_metadata(self):
-        write_workspace(self.workspace)
-        index = load_index(self.workspace / "forms", self.workspace / "base_review.md")
-        self.assertEqual(index.problems, [])
-        for name, spec in FIXTURES.items():
-            result = index.resolve(build_profile(build_fixture(name, self.tmp_path)))
-            expected = ("resolved", spec.venue_id) if spec.venue_id else ("unresolved", "")
-            self.assertEqual((result["status"], result["venue_id"]), expected, name)
-
     def test_running_headers_and_footers(self):
-        stamps = build_profile(build_fixture("ieee_single", self.tmp_path))["stamps"]
-        by_text = {(s["source"], s["text"]): s["pages"] for s in stamps}
-        self.assertEqual(by_text[("header", "For consideration in IEEE Access")], [1, 2, 3])
-        self.assertEqual(by_text[("footer", "VOLUME 11, 2023")], list(range(4, 18)))
-        self.assertEqual(len(by_text[("header", "Page 1 of 17")]), 17)
-        tmlcn = build_profile(build_fixture("scholarone_two_copies", self.tmp_path))["stamps"]
-        header = next(s for s in tmlcn if s["source"] == "header")
-        self.assertIn("Page 1 of 55", header["text"])
-        self.assertEqual(len(header["pages"]), 55)
+        def lines(path):
+            store = PaperStore.open(path)
+            found: dict[tuple[str, str], list[int]] = {}
+            for page in range(1, store.page_count + 1):
+                for line in store.lines(page, ("header", "footer")):
+                    found.setdefault((line["region"], line["text"]), []).append(page)
+            return found
+
+        ieee = lines(build_fixture("ieee_single", self.tmp_path))
+        self.assertEqual(ieee[("header", "For consideration in IEEE Access")], [1, 2, 3])
+        self.assertEqual(ieee[("footer", "VOLUME 11, 2023")], list(range(4, 18)))
+        self.assertEqual(ieee[("header", "Page 1 of 17")], [1])
+        self.assertEqual(len({text for region, text in ieee if region == "header" and text.startswith("Page ")}), 17)
+        tmlcn = lines(build_fixture("scholarone_two_copies", self.tmp_path))
+        headers = {text for region, text in tmlcn if region == "header"}
+        self.assertEqual(len(headers), 55)
+        # extraction normalizes runs of spaces, so compare the whitespace-collapsed text
+        normalized = {" ".join(text.split()) for text in headers}
+        self.assertIn(
+            "For consideration in IEEE Transactions on Machine Learning in Communications and Networking Page 1 of 55",
+            normalized,
+        )
 
     def test_submission_item_labels(self):
         long_review = page_texts(build_fixture("em_long_review", self.tmp_path))

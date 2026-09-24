@@ -20,18 +20,12 @@ from reviewer_mcp.store import PaperStore, close_all
 
 TOOLS = {
     "get_paper_overview",
-    "set_manuscript_pages",
     "read_pages",
     "read_section",
     "search_paper",
-    "get_author_responses",
     "list_assets",
     "get_asset",
-    "get_review_guideline",
-    "submit_report",
-    "update_report_field",
 }
-READERS = ("get_paper_overview", "read_pages", "read_section", "search_paper", "get_author_responses", "list_assets")
 SCHEMA_BUDGET = 9_200  # characters of the tool list the model receives (names, descriptions, parameters), ~2.5k tokens
 
 
@@ -63,8 +57,13 @@ class TestContract(ServerCase):
                 self.assertTrue(schema.get("description"), f"{tool.name}.{name} has no description")
         listed = [{"name": t.name, "description": t.description, "parameters": t.input_schema} for t in tools.values()]
         self.assertLessEqual(len(json.dumps(listed, ensure_ascii=False)), SCHEMA_BUDGET)
-        for name in READERS:
+        for name in sorted(TOOLS):
+            self.assertFalse(tools[name].annotations.destructive_hint or False, name)
+        # read_pages, get_asset, and get_paper_overview still write to the budget ledger
+        # (a retained intermediate state), so only pure reads can claim read-only.
+        for name in ("read_section", "search_paper", "list_assets"):
             self.assertTrue(tools[name].annotations.read_only_hint, name)
+            self.assertTrue(tools[name].annotations.idempotent_hint, name)
 
     def test_protocol_negotiated_over_stdio(self):
         async def negotiate(mode):
@@ -82,20 +81,31 @@ class TestContract(ServerCase):
 
 
 class TestReading(ServerCase):
-    def test_overview_of_a_revision(self):
+    def test_overview_is_neutral_and_covers_the_whole_pdf(self):
         paper = self.paper("em_revision")
         (self.workspace / "papers" / f"{paper[:-4]}.notes").write_text("Check the ageing baseline.", encoding="utf-8")
         view = server.get_paper_overview(paper)
-        self.assertEqual((view["venue"]["status"], view["venue"]["venue_id"]), ("resolved", "elsevier_jii"))
-        self.assertEqual([p["kind"] for p in view["parts"]], ["cover", "manuscript", "responses", "other"])
-        self.assertEqual(view["manuscript"]["pages"], "2-37")
-        self.assertEqual(view["round"]["status"], "revision")
-        self.assertEqual(view["reviewer_notes"], "Check the ageing baseline.")
+        self.assertEqual(view["paper"], paper)
+        self.assertEqual(view["pdf_pages"], 59)
         self.assertEqual(view["title"], "Mechanism-Guided Framework for Multi-Fault Diagnosis of Battery Systems")
-        self.assertTrue(any("Introduction" in heading for heading in view["outline"]))
+        for key in ("venue", "reviewer_notes", "parts", "manuscript", "round"):
+            self.assertNotIn(key, view)
+        self.assertNotIn("ageing", json.dumps(view))  # a .notes file next to the PDF is not read
+        outline = view["outline"]
+        self.assertTrue(outline)
+        self.assertEqual(len({entry["id"] for entry in outline}), len(outline))
+        self.assertTrue(all(set(entry) == {"id", "level", "number", "title", "page"} for entry in outline))
+        self.assertTrue(any("Introduction" in entry["title"] for entry in outline))
         self.assertEqual(view["numbered_items"]["figure"], 3)
-        self.assertIn("figure:3", view["uncited_items"])
-        self.assertNotIn("/", json.dumps(view["parts"]) + str(view["paper"]))
+        self.assertNotIn("/", str(view["paper"]))
+
+    def test_overview_allows_a_missing_title_and_reports_warnings(self):
+        view = server.get_paper_overview(self.paper("scanned"))
+        self.assertEqual(view["pdf_pages"], 1)
+        self.assertEqual(view["title"], "")
+        self.assertEqual(view["outline"], [])
+        self.assertEqual(view["numbered_items"], {})
+        self.assertEqual(len(view["warnings"]), 1)
 
     def test_read_pages_returns_every_page_once(self):
         paper = self.paper("ieee_single")
@@ -127,14 +137,14 @@ class TestReading(ServerCase):
                     self.assertIn(line["text"], joined)
         self.assertIn(reading.REFERENCES_OMITTED, joined)
         again = server.read_pages(paper)
-        self.assertTrue(again.startswith("Pages 4-17 were already returned in this review."), again)
+        self.assertTrue(again.startswith("Pages 4-17 were already returned."), again)
         self.assertTrue(server.read_pages(paper, first_page=10, last_page=17).startswith("Pages 10-17 were already"))
         everything = server.read_pages(paper, first_page=16, last_page=17, part="all")
         self.assertNotIn(reading.REFERENCES_OMITTED, everything)
         self.assertIn("[1]", everything)
         with self.assertRaisesRegex(ToolError, r"outside this PDF \(17 pages; manuscript = pages 4-17\)"):
             server.read_pages(paper, first_page=40)
-        server.get_paper_overview(paper)  # a new review may read everything again
+        server.get_paper_overview(paper)  # a new reading session may read everything again
         self.assertTrue(server.read_pages(paper).startswith("Pages 4-"))
 
     def test_sections_and_search(self):
@@ -148,29 +158,6 @@ class TestReading(ServerCase):
         hits = server.search_paper(paper, "Fig")
         self.assertGreaterEqual(hits["total_hits"], 3)
         self.assertTrue(all(4 <= hit["page"] <= 17 for hit in hits["hits"]))
-
-    def test_author_responses(self):
-        paper = self.paper("em_revision")
-        summary = server.get_author_responses(paper)
-        self.assertIn("reviewers present: [1, 6, 7, 8]", summary.splitlines()[0])
-        six = server.get_author_responses(paper, reviewer=6)
-        self.assertIn("Response to Reviewer 6", six)
-        self.assertNotIn("Response to Reviewer 7", six)
-        self.assertIn("Nothing new to return", server.get_author_responses(paper, reviewer=6))
-        comment = server.get_author_responses(paper, query="Comment 2")
-        self.assertRegex(comment.splitlines()[0], r"query 'Comment 2': [1-9]\d* matching items")
-        with self.assertRaisesRegex(ToolError, "reviewers present"):
-            server.get_author_responses(paper, reviewer=2)
-        with self.assertRaisesRegex(ToolError, "revisions only"):
-            server.get_author_responses(self.paper("ieee_single"))
-        server.get_paper_overview(paper)  # a new review may read the letter again
-        self.assertIn("Response to Reviewer 6", server.get_author_responses(paper, reviewer=6))
-
-    def test_manual_manuscript_range(self):
-        paper = self.paper("scholarone_two_copies")
-        view = server.set_manuscript_pages(paper, 24, 43, "pages 4-23 are the highlighted copy")
-        self.assertEqual((view["manuscript"]["pages"], view["manuscript"]["source"]), ("24-43", "override"))
-        self.assertTrue(server.read_pages(paper).startswith("Pages 24"))
 
 
 class TestAssets(ServerCase):
@@ -199,10 +186,10 @@ class TestAssets(ServerCase):
 
         with mock.patch.dict(os.environ, {"REVIEWER_CONFIG": str(override)}):
             self.assertEqual(json.loads(reply("figure:1"))["id"], "figure:1")
-            self.assertEqual(reply("figure:1"), "figure:1 was already returned in this review.")
+            self.assertEqual(reply("figure:1"), "figure:1 was already returned.")
             self.assertEqual(json.loads(reply("table:I"))["id"], "table:I")
-            self.assertIn("The budget of 2 items per review is used (figure:1, table:I)", reply("figure:2"))
-            server.get_paper_overview(paper)  # a new review restores the budget
+            self.assertIn("The budget of 2 items is used (figure:1, table:I)", reply("figure:2"))
+            server.get_paper_overview(paper)  # a new reading session restores the budget
             self.assertEqual(json.loads(reply("figure:2"))["id"], "figure:2")
 
     def test_budget_holds_for_parallel_calls(self):
@@ -233,64 +220,8 @@ class TestAssets(ServerCase):
             kinds = [[type(c).__name__ for c in run(figure).content] for _ in range(5)]
             self.assertEqual(kinds[0], ["TextContent", "ImageContent"])
             self.assertEqual(kinds[4], ["TextContent"])
-            server.get_paper_overview(paper)  # a new review restores the budget
+            server.get_paper_overview(paper)  # a new reading session restores the budget
             self.assertEqual([type(c).__name__ for c in run(figure).content], ["TextContent", "ImageContent"])
-
-
-class TestGuidelineAndReports(ServerCase):
-    def test_only_valid_reports_are_published(self):
-        paper = self.paper("ieee_single")
-        guideline = server.get_review_guideline(paper)
-        self.assertEqual((guideline["status"], guideline["venue_id"]), ("resolved", "ieee_access"))
-        skeleton = server.get_review_guideline(paper, form_only=True)["skeleton"]
-        self.assertIn("| **Venue ID** | ieee_access |", skeleton)
-        self.assertIn("Recommendation: <to fill: one of: Accept | Reject>", skeleton)
-        self.assertIn("Comments to the Author:\n<to fill: 1-3 paragraphs; main issues>", skeleton)
-        published = self.workspace / "reports" / "Access-2026-00001_Proof_hi_Report.md"
-
-        first = server.submit_report(paper, skeleton)
-        self.assertFalse(first["published"])
-        self.assertFalse(published.exists())
-
-        draft = skeleton.replace("<to fill: 1-5>", "3", 4).replace("<to fill: 1-5>", "high")
-        draft = draft.replace("<to fill: one of: Accept | Reject>", "Accept")
-        draft = draft.replace("<to fill: a whole number from 1 to 10>", "7")
-        draft = re.sub(r"<to fill[^>]*>", "Checked against the manuscript.", draft)
-        second = server.submit_report(paper, draft)
-        self.assertFalse(second["published"])
-        self.assertTrue(any("impact" in error for error in second["errors"]))
-
-        third = server.update_report_field(paper, "Quality Matrix: Impact", "4")
-        self.assertTrue(third["published"], third)
-        fourth = server.update_report_field(paper, "Recommendation", "Reject")
-        self.assertTrue(fourth["published"], fourth)
-        fifth = server.update_report_field(paper, "comments to the author", "First point.\n\nSecond point.")
-        self.assertTrue(fifth["published"], fifth)
-        text = published.read_text(encoding="utf-8")
-        self.assertIn("Recommendation: Reject", text)
-        self.assertIn("Comments to the Author:\nFirst point.\n\nSecond point.", text)
-        invalid = server.update_report_field(paper, "Overall Rating", "11")
-        self.assertFalse(invalid["published"])
-        self.assertTrue(any("whole number from 1 to 10" in error for error in invalid["errors"]))
-        with self.assertRaisesRegex(ToolError, "No form field is labelled"):
-            server.update_report_field(paper, "Confidential Notes", "5")
-
-        # a report cannot pick another venue than the guideline it was written against
-        published.unlink()
-        wrong = draft.replace("| **Venue ID** | ieee_access |", "| **Venue ID** | elsevier_jii |")
-        result = server.submit_report(paper, wrong)
-        self.assertFalse(result["published"])
-        self.assertTrue(any("differs from the venue resolved" in error for error in result["errors"]))
-        self.assertFalse(published.exists())
-
-    def test_update_needs_a_draft_and_unresolved_venues_abort(self):
-        paper = self.paper("em_revision")
-        with self.assertRaisesRegex(ToolError, "no draft"):
-            server.update_report_field(paper, "Recommendation", "Accept")
-        (self.workspace / "forms" / "elsevier_jii.md").unlink()
-        self.assertIn("STRICT ABORT", server.get_review_guideline(paper)["error"])
-        with self.assertRaisesRegex(ToolError, "is not in papers/"):
-            server.get_paper_overview("missing.pdf")
 
 
 if __name__ == "__main__":
