@@ -1,0 +1,42 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
+
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff
+        entry: ruff check .
+        language: system
+        files: '(\.py$|^pyproject\.toml$)'
+        pass_filenames: false
+
+      - id: basedpyright
+        name: basedpyright
+        entry: basedpyright
+        language: system
+        files: '(\.py$|^pyproject\.toml$)'
+        pass_filenames: false
+
+      - id: vulture
+        name: vulture
+        entry: vulture src/reviewer_mcp
+        language: system
+        files: '(\.py$|^pyproject\.toml$)'
+        pass_filenames: false
+
+      - id: unittest
+        name: unittest (tests)
+        # the project venv holds the pinned dependencies (as CI's `pip install ".[dev]"`); a system python may not
+        entry: bash -c 'PY=python3; if [ -x venv/bin/python ]; then PY=venv/bin/python; fi; PYTHONPATH=src exec "$PY" -m unittest discover -s tests -p "test_*.py" -v'
+        language: system
+        files: '(\.py$|^pyproject\.toml$)'
+        pass_filenames: false

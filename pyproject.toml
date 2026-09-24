@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "reviewer-mcp"
+version = "0.1.0"
+authors = [
+    {name = "Gonçalo Gomes", email = "goncalocfgomes@ua.pt"},
+    {name = "Mário Antunes (original work)", email = "mario.antunes@ua.pt"}
+]
+description = "Reviewer MCP — an MCP server that lets an AI agent read a paper submission (parts, outline, numbered items), load the venue guideline and publish only valid review reports."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+keywords = ["mcp", "document ingestion", "academic", "information retrieval", "pdf", "pymupdf"]
+dependencies = [
+    "fastmcp>=4.0.3,<5",
+    "mcp>=2.2,<3",
+    "pymupdf>=1.26",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "basedpyright",
+    "vulture",
+    "pre-commit",
+    "build",
+]
+
+[project.scripts]
+reviewer-mcp = "reviewer_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/reviewer_mcp"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/", "README.md", "pyproject.toml"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "B", "I", "UP"]
+ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]
+
+[tool.basedpyright]
+typeCheckingMode = "standard"
+include = ["src/reviewer_mcp"]
+reportImportCycles = "none"
+reportReturnType = "none"
+
+[tool.vulture]
+paths = ["src/reviewer_mcp"]
+min_confidence = 80
+ignore_names = ["main", "_emergency_exit", "_on_sigint", "_on_sigterm_early",
+                "_lifespan"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
