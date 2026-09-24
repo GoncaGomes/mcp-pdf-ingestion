@@ -78,7 +78,7 @@ def _open(paper: str) -> tuple[Any, PaperStore]:
     return pdf, PaperStore.open(pdf)
 
 
-@mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True})
 @_agent_errors
 def get_paper_overview(paper: Paper) -> dict[str, Any]:
     """Call first. Returns the document identity, page count, the extracted title when one is found, the full-PDF
@@ -87,7 +87,7 @@ def get_paper_overview(paper: Paper) -> dict[str, Any]:
     return overview(store, pdf)
 
 
-@mcp.tool(annotations={"destructiveHint": False, "idempotentHint": True})
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False})
 @_agent_errors
 def read_pages(
     paper: Paper,
@@ -207,7 +207,7 @@ def list_assets(
     return reply
 
 
-@mcp.tool(annotations={"readOnlyHint": True})
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False})
 @_agent_errors
 def get_asset(
     paper: Paper,

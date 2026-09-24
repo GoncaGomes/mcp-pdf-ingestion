@@ -76,15 +76,26 @@ notes, the responses key and the notes budget were removed from `papers.py`.
 and their dedicated tests after confirming no remaining imports.
 `tests/test_server.py` rewritten for the six-tool contract; `tests/test_fixtures.py`
 adapted from profile/venues to `PaperStore` queries; `README.md` updated to describe
-the six tools and the intermediate state. Supporting edit: the `read_pages`
-annotation is now `destructiveHint: False, idempotentHint: True` because it still
-writes consumed-page state; the contract test therefore asserts read-only only for
-`read_section`, `search_paper`, `list_assets`. Retained per PLAN as intermediate
-state: readers default to the detected manuscript part, and the consumed-page,
-asset and image budgets (with their overview resets) remain.
+the six tools and the intermediate state. Review correction (same day): the
+intermediate annotations of the three stateful tools were corrected —
+`get_paper_overview` is now `readOnlyHint: False, destructiveHint: True,
+idempotentHint: True` (it resets the consumption ledger), `read_pages` is
+`readOnlyHint: False, destructiveHint: False, idempotentHint: False` (repeated
+requests consume additional pages), and `get_asset` is `readOnlyHint: False,
+destructiveHint: False, idempotentHint: False` (it updates the consumption and
+image counters); no tool behavior, signatures, quotas or reset logic changed. The
+contract test now asserts the exact hint triples for all six tools;
+`read_section`, `search_paper` and `list_assets` keep their read-only annotations.
+New regression test `TestBareWorkspace.test_overview_without_legacy_reviewer_files`
+proves `get_paper_overview` works in an isolated workspace containing only the
+synthetic PDF under `papers/` (no `forms/`, `base_review.md` or reviewer notes) and
+verifies the page count and the outline. Retained per PLAN as intermediate state:
+readers default to the detected manuscript part, and the consumed-page, asset and
+image budgets (with their overview resets) remain.
 
 Validation: focused runs `python -m unittest discover -s tests -p "test_server.py"`
-(10 ok) and `-p "test_fixtures.py"` (6 ok); full suite 51 tests: 45 ok, 1 failure
+(11 ok, including the new bare-workspace regression test) and `-p "test_fixtures.py"`
+(6 ok); full suite 52 tests: 46 ok, 1 failure
 (pre-existing on this Windows machine: chmod 0o700 not enforced,
 `test_store_location_permissions_and_cache`), 5 skips (corpus/real-PDF tests without
 `REVIEWER_WORKSPACE`). `ruff check .` clean (the baseline E501 in `server.py` no
@@ -94,10 +105,8 @@ baseline was 93 tests with 1 failure, 5 flaky Windows temp-lock errors and 8 ski
 no new failures were introduced.
 
 Limitations: readers still default to the detected manuscript part and budgets
-still apply until later tasks; `get_paper_overview` and `get_asset` keep the
-inherited read-only hints while their budget-ledger writes remain; the one
-configured PDF per server, full-PDF read defaults and visual questions arrive in
-later tasks (MCP-02 onward).
+still apply until later tasks; the one configured PDF per server, full-PDF read
+defaults and visual questions arrive in later tasks (MCP-02 onward).
 
 Next: owner review and acceptance of the working-tree diff.
 

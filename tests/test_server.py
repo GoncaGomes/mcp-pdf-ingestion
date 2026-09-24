@@ -57,13 +57,19 @@ class TestContract(ServerCase):
                 self.assertTrue(schema.get("description"), f"{tool.name}.{name} has no description")
         listed = [{"name": t.name, "description": t.description, "parameters": t.input_schema} for t in tools.values()]
         self.assertLessEqual(len(json.dumps(listed, ensure_ascii=False)), SCHEMA_BUDGET)
-        for name in sorted(TOOLS):
-            self.assertFalse(tools[name].annotations.destructive_hint or False, name)
-        # read_pages, get_asset, and get_paper_overview still write to the budget ledger
-        # (a retained intermediate state), so only pure reads can claim read-only.
+        # read_pages and get_asset record what they return in the retained consumption ledger
+        # (not idempotent), and get_paper_overview resets it (destructive but idempotent);
+        # none of them can claim read-only.
+        def hints(name):
+            a = tools[name].annotations
+            return (a.read_only_hint, bool(a.destructive_hint), a.idempotent_hint)
+
+        self.assertEqual(hints("get_paper_overview"), (False, True, True))
+        self.assertEqual(hints("read_pages"), (False, False, False))
+        self.assertEqual(hints("get_asset"), (False, False, False))
+        # only the pure reads claim read-only
         for name in ("read_section", "search_paper", "list_assets"):
-            self.assertTrue(tools[name].annotations.read_only_hint, name)
-            self.assertTrue(tools[name].annotations.idempotent_hint, name)
+            self.assertEqual(hints(name), (True, False, True), name)
 
     def test_protocol_negotiated_over_stdio(self):
         async def negotiate(mode):
@@ -78,6 +84,28 @@ class TestContract(ServerCase):
         # 2026-07-28 is negotiated with server/discover; initialize remains for handshake-era clients
         self.assertEqual(asyncio.run(negotiate("auto")), ("2026-07-28", len(TOOLS)))
         self.assertEqual(asyncio.run(negotiate("legacy"))[0], "2025-11-25")
+
+
+class TestBareWorkspace(IsolatedTestCase):
+    """The overview must not depend on legacy reviewer files (forms/, base_review.md, notes)."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(close_all)
+
+    def test_overview_without_legacy_reviewer_files(self):
+        paper = build_fixture("ieee_single", self.workspace / "papers").name
+        self.assertFalse((self.workspace / "forms").exists())
+        self.assertFalse((self.workspace / "base_review.md").exists())
+        self.assertFalse(list(self.workspace.glob("papers/*.notes")))
+        view = server.get_paper_overview(paper)
+        self.assertEqual(view["paper"], paper)
+        self.assertEqual(view["pdf_pages"], 17)
+        outline = view["outline"]
+        self.assertTrue(outline)
+        self.assertEqual(len({entry["id"] for entry in outline}), len(outline))
+        self.assertTrue(all(set(entry) == {"id", "level", "number", "title", "page"} for entry in outline))
+        self.assertTrue(any("RELATED WORK" in entry["title"] for entry in outline))
 
 
 class TestReading(ServerCase):

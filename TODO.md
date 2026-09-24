@@ -68,12 +68,18 @@ after MCP-03; the coding agent does not modify that consumer repository.
 
 ## Resume note
 
-MCP-01 is implemented and `review_pending` (2026-09-24). Files:
+MCP-01 is implemented and `review_pending` (2026-09-24); both review findings are
+fixed in the same working-tree diff. Files:
 `src/reviewer_mcp/server.py`, `papers.py`, `config.py`; deleted reviewer-only
 `forms.py`, `profile.py`, `reports.py`, `responses.py`, `validator.py`, `venues.py`;
 rewrote `tests/test_server.py`, adapted `tests/test_fixtures.py`; deleted
 `tests/test_venues.py` and `tests/test_guidelines_validator.py`; updated
-`README.md`. Checks: full suite 51 tests (45 ok, 1 pre-existing Windows chmod
-failure, 5 corpus skips), ruff clean, basedpyright 0, vulture clean,
-`git diff --check` clean. Next: owner review of the working-tree diff and
-acceptance; the coding agent performs no Git operations.
+`README.md`. Review corrections (2026-09-24): the three stateful tools in
+`server.py` now carry the corrected annotations (`get_paper_overview`:
+readOnlyHint=False/destructiveHint=True/idempotentHint=True; `read_pages` and
+`get_asset`: all False); the contract test asserts the exact hint triples for all
+six tools; new `TestBareWorkspace` regression test proves `get_paper_overview`
+works with only the PDF under `papers/`. Checks: full suite 52 tests (46 ok, 1
+pre-existing Windows chmod failure, 5 corpus skips), ruff clean, basedpyright 0,
+vulture clean, `git diff --check` clean. Next: owner review of the working-tree
+diff and acceptance; the coding agent performs no Git operations.
