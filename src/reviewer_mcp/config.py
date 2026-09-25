@@ -51,9 +51,10 @@ def load_document_config() -> DocumentConfig:
 
     Reads ``PDF_INGESTION_PDF`` and ``PDF_INGESTION_RUN_DIR``; both are required. Relative paths are
     resolved against the current working directory, preserving spaces in names. The PDF must exist as a
-    regular file and open in a PyMuPDF context manager as a usable document with at least one page; no
-    content is extracted. The run directory may not exist yet, but must not already be a file. Nothing is
-    created and no model settings are read.
+    regular file and open in a PyMuPDF context manager as a usable document: it must be a real PDF
+    (not another image or file format), must not require a password, and must have at least one page.
+    No content is extracted. The run directory may not exist yet, but must not already be a file. Nothing
+    is created and no model settings are read.
     """
     pdf_raw = os.environ.get("PDF_INGESTION_PDF")
     run_raw = os.environ.get("PDF_INGESTION_RUN_DIR")
@@ -74,6 +75,10 @@ def load_document_config() -> DocumentConfig:
 
     try:
         with fitz.open(str(pdf_path)) as doc:
+            if not doc.is_pdf:
+                raise ValueError(f"not a PDF document (file is not in PDF format): {pdf_path}")
+            if doc.needs_pass:
+                raise ValueError(f"PDF is password-protected: {pdf_path}")
             if doc.page_count < 1:
                 raise ValueError(f"PDF has no pages: {pdf_path}")
     except ValueError:

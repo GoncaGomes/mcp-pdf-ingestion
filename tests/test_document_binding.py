@@ -3,8 +3,9 @@
 Two real server processes over stdio (same pattern as tests/test_server.py) bind to two synthetic PDFs
 that share the same filename but live in separate folders, with distinct run directories and
 distinguishable text. No model settings or credentials are configured in any process. Startup rejection
-(missing configuration, invalid PDF) and a successful launch with spaces in the PDF path are checked
-with bounded timeouts; the StdioTransport context manager and subprocess.run keep the processes clean.
+(missing configuration, invalid PDF, PNG renamed to .pdf, password-protected PDF) and a successful
+launch with spaces in the PDF path are checked with bounded timeouts; the StdioTransport context
+manager and subprocess.run keep the processes clean.
 """
 
 from __future__ import annotations
@@ -36,6 +37,28 @@ def _build_pdf(path: Path, marker: str, pages: int = 2) -> Path:
         page.insert_text((72, 130), f"Distinguishable filler sentence {i + 1} for {marker}.", fontsize=10)
     path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(path))
+    doc.close()
+    return path
+
+
+def _build_png_pdf(path: Path) -> Path:
+    """PNG bytes rendered with PyMuPDF and saved under a .pdf filename."""
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 120), "A PNG image, not a PDF.", fontsize=12)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(doc[0].get_pixmap().tobytes("png"))
+    doc.close()
+    return path
+
+
+def _build_encrypted_pdf(path: Path, user_pw: str = "binding-test-user-password") -> Path:
+    """A minimal synthetic PDF that requires a non-empty user password to open."""
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 120), "Encrypted document.", fontsize=12)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc.save(
+        str(path), encryption=fitz.PDF_ENCRYPT_AES_128, user_pw=user_pw, owner_pw="binding-test-owner-password"
+    )
     doc.close()
     return path
 
@@ -132,6 +155,28 @@ class StartupRejectionTestCase(IsolatedTestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
         self.assertIn("not a usable PDF", result.stderr)
+        self.assertFalse((self.tmp_path / "run").exists())  # nothing is created for a rejected document
+
+    def test_png_renamed_to_pdf_is_rejected_before_serving(self):
+        bad = _build_png_pdf(self.tmp_path / "image.pdf")
+        result = self._launch(
+            PDF_INGESTION_PDF=str(bad),
+            PDF_INGESTION_RUN_DIR=str(self.tmp_path / "run"),
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("not a PDF document", result.stderr)
+        self.assertFalse((self.tmp_path / "run").exists())  # nothing is created for a rejected document
+
+    def test_password_protected_pdf_is_rejected_before_serving(self):
+        bad = _build_encrypted_pdf(self.tmp_path / "locked.pdf")
+        result = self._launch(
+            PDF_INGESTION_PDF=str(bad),
+            PDF_INGESTION_RUN_DIR=str(self.tmp_path / "run"),
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("password-protected", result.stderr)
         self.assertFalse((self.tmp_path / "run").exists())  # nothing is created for a rejected document
 
 

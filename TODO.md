@@ -5,10 +5,12 @@ Read `AGENTS.md` and the selected task in `PLAN.md` before editing.
 
 ## Current work
 
-- Active task: **MCP-02** — `review_pending` (all blocks implemented, owner
-  acceptance pending) since 2026-09-25.
+- Active task: **MCP-02** — `review_pending` (all blocks implemented; review fix
+  for non-PDF/password-protected rejection added 2026-09-25; owner acceptance
+  pending).
 - Prior task: **MCP-01** — implemented 2026-09-24, `review_pending`.
-- Last implementation block: **MCP-02.3** — implemented 2026-09-25, task-wide
+- Last implementation block: **MCP-02.3** — implemented 2026-09-25; review fix
+  (config rejects non-PDF and password-protected PDFs) 2026-09-25, task-wide
   checks passed (see checkpoint below).
 - Implementation started under this plan: yes (MCP-01, MCP-02).
 - The owner and planning chat prepared the documents; MCP-00 is not an implementation task.
@@ -83,20 +85,23 @@ means its specified checks passed; it does not mean owner acceptance of the task
 
 ## Resume note
 
-- Task: MCP-02 (`review_pending`); final block MCP-02.3 implemented 2026-09-25.
-- New `tests/test_document_binding.py` (no source changes): two real stdio
-  processes serve two same-named synthetic PDFs from separate folders with
-  distinct run dirs — each `document_id` matches its own PDF's SHA-256, each
-  `read_pages(1..2, part='all')` returns only its own markers, each store
-  exists only under its own run dir. Startup rejection (missing settings,
-  invalid PDF) exits non-zero with a stderr diagnostic before serving; a
-  launch with spaces in the PDF path serves normally. Bounded timeouts, no
-  new process infrastructure.
-- Checks (repo venv, newly run): focused test_document_binding 4/4 OK; full
-  suite 68 run, 1 failure, 0 errors, 5 skipped — failure is the pre-existing
-  Windows chmod issue (`test_store_location_permissions_and_cache`, 511 != 448);
-  skips are corpus tests without `REVIEWER_WORKSPACE`. `ruff check .` clean,
-  `basedpyright` 0/0/0, `vulture` clean, `git diff --check` no whitespace
-  errors. README unchanged (binding already documented in MCP-02.2).
-- Next: owner review/acceptance of the MCP-02 diff; suggested commit after
-  acceptance: `feat(mcp): bind each server to one PDF and run directory`.
+- Task: MCP-02 (`review_pending`); review fix 2026-09-25: configuration loading
+  rejects non-PDF documents and password-protected PDFs at startup.
+- `load_document_config()` (config.py) now checks, inside the existing PyMuPDF
+  context manager and before the page-count check: `doc.is_pdf` false →
+  "not a PDF document", `doc.needs_pass` → "PDF is password-protected" (both
+  ValueError with the path); page-count check and "not a usable PDF" wrapper
+  unchanged. New tests: PNG bytes (PyMuPDF pixmap) saved under a `.pdf` name
+  and a one-page AES-128 PDF with a non-empty user password — loader cases in
+  `test_config.py`, plus two `StartupRejectionTestCase` cases in
+  `test_document_binding.py` (non-zero exit, reason on stderr, no stdout
+  protocol output, no run directory; existing bounded subprocess helpers).
+- Checks (repo venv, newly run): focused test_config 12/12 OK; focused
+  test_document_binding 6/6 OK; full suite 72 run, 1 failure, 0 errors, 5
+  skipped — failure is the pre-existing Windows chmod issue
+  (`test_store_location_permissions_and_cache`, 511 != 448); skips are corpus
+  tests without `REVIEWER_WORKSPACE`. `ruff check .` clean, `basedpyright`
+  0/0/0, `vulture` clean, `git diff --check` no whitespace errors (only
+  pre-existing LF/CRLF warnings).
+- Next: owner review/acceptance of the MCP-02 diff incl. this fix; suggested
+  commit after acceptance: `feat(mcp): bind each server to one PDF and run directory`.

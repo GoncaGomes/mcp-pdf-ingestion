@@ -244,6 +244,48 @@ edits, no reader/quota/vision changes.
 Next: owner review and acceptance of the MCP-02 diff; suggested owner commit
 after acceptance: `feat(mcp): bind each server to one PDF and run directory`.
 
+## 2026-09-25 - MCP-02 - Review fix: reject non-PDF and password-protected PDFs
+
+Status: review fix implemented; parent MCP-02 stays `review_pending` (owner
+acceptance pending)
+
+Changed: `src/reviewer_mcp/config.py` (`load_document_config`): inside the
+existing PyMuPDF context manager and before the page-count check, documents
+with `doc.is_pdf` false are rejected with "not a PDF document (file is not in
+PDF format)" and documents with `doc.needs_pass` with "PDF is
+password-protected"; both raise ValueError identifying the reason and the
+path. The page-count check and the "not a usable PDF" wrapper for open
+failures are unchanged. `tests/test_config.py`: two new loader cases — PNG
+bytes rendered with a PyMuPDF pixmap and saved under a `.pdf` name, and a
+one-page AES-128 PDF saved with a non-empty user password — both rejected
+with the expected reason. `tests/test_document_binding.py`: two new
+`StartupRejectionTestCase` cases with module-level generators for the same
+two file kinds, each verifying a non-zero exit, the reason on stderr, empty
+stdout (no protocol output) and no run directory created; the existing
+bounded `subprocess.run` timeout and env helpers are reused. No password
+support, no new dependencies, and no changes to startup, store/cache behavior
+or tool signatures.
+
+Validation (repository venv, newly executed): focused
+`python -m unittest discover -s tests -p "test_config.py" -q` — 12 tests, all
+OK. Focused `python -m unittest discover -s tests -p "test_document_binding.py"
+-q` — 6 tests, all OK. Task-wide checks once: full suite
+`python -m unittest discover -s tests -p "test_*.py" -q` — **72 run, 1 failure,
+0 errors, 5 skipped** (suite was 68 before this fix). The single failure is
+the pre-existing Windows issue `test_store.TestPaperStore.test_store_location_permissions_and_cache`
+(0o700 not enforced, `511 != 448`), unchanged by this fix; the 5 skips are the
+corpus/real-PDF tests requiring `REVIEWER_WORKSPACE` with real PDFs (absent on
+this machine). `ruff check .` clean; `basedpyright` 0 errors, 0 warnings, 0
+notes; `vulture` clean; `git diff --check` no whitespace errors (only
+pre-existing LF/CRLF line-ending warnings).
+
+Limitations: password-protected PDFs are rejected, not opened (no password
+support added); the Windows chmod failure and corpus skips are baseline and
+reported separately, not fixed here.
+
+Next: owner review and acceptance of the MCP-02 diff; suggested owner commit
+after acceptance: `feat(mcp): bind each server to one PDF and run directory`.
+
 ## Entry format for future work
 
 Append one short entry per task attempt, using the actual date:

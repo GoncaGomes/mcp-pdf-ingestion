@@ -22,6 +22,26 @@ def make_pdf(path: Path) -> Path:
     return path
 
 
+def make_png_pdf(path: Path) -> Path:
+    """PNG bytes rendered with PyMuPDF and saved under a .pdf filename."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 120), "A PNG image, not a PDF.", fontsize=11)
+    path.write_bytes(doc[0].get_pixmap().tobytes("png"))
+    doc.close()
+    return path
+
+
+def make_encrypted_pdf(path: Path, user_pw: str = "locked-user-password") -> Path:
+    """A one-page PDF that requires a non-empty user password to open."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 120), "Encrypted synthetic document.", fontsize=11)
+    doc.save(str(path), encryption=fitz.PDF_ENCRYPT_AES_128, user_pw=user_pw, owner_pw="locked-owner-password")
+    doc.close()
+    return path
+
+
 def apply_env(pdf: str | None, run: str | None) -> None:
     """Set (or clear) the two configuration variables."""
     for name, value in zip(CONFIG_VARS, (pdf, run), strict=True):
@@ -81,6 +101,18 @@ class TestLoadDocumentConfig(unittest.TestCase):
         pdf.write_bytes(b"")
         apply_env(str(pdf), str(self.root / "run"))
         with self.assertRaisesRegex(ValueError, "not a usable PDF"):
+            load_document_config()
+
+    def test_png_renamed_to_pdf_is_rejected(self):
+        png = make_png_pdf(self.root / "image.pdf")
+        apply_env(str(png), str(self.root / "run"))
+        with self.assertRaisesRegex(ValueError, "not a PDF document"):
+            load_document_config()
+
+    def test_password_protected_pdf_is_rejected(self):
+        locked = make_encrypted_pdf(self.root / "locked.pdf")
+        apply_env(str(locked), str(self.root / "run"))
+        with self.assertRaisesRegex(ValueError, "password-protected"):
             load_document_config()
 
     def test_run_dir_pointing_to_file_is_rejected(self):
