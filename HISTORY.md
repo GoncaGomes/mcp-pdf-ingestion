@@ -61,7 +61,7 @@ implementation tasks remain pending; no implementation commits are claimed.
 
 ## 2026-09-24 - MCP-01 - Expose six neutral PDF tools
 
-Status: review_pending
+Status: complete
 
 Changed: `server.py` now registers exactly six tools (`get_paper_overview`,
 `read_pages`, `read_section`, `search_paper`, `list_assets`, `get_asset`) and all
@@ -109,6 +109,140 @@ still apply until later tasks; the one configured PDF per server, full-PDF read
 defaults and visual questions arrive in later tasks (MCP-02 onward).
 
 Next: owner review and acceptance of the working-tree diff.
+
+## 2026-09-25 - Execution blocks and context guidance
+
+Inspected branch head: `371317499d1df0e57757697a46700ecb471c8216`.
+MCP-01 implementation and review corrections are already committed (`a756b7c`,
+`3713174`). Earlier working-tree handoff descriptions record their state at the
+original handoff; they no longer describe the remote branch. Owner acceptance
+remains `review_pending` in the inspected TODO.
+
+PLAN now distinguishes deliverables, implementation blocks and threads. MCP-02
+has three specified blocks: configuration; startup/store/tool binding; isolation
+checks and closure. The remaining task scopes and commit suggestions are retained
+for later refinement against current code. AGENTS uses focused checks per block,
+final checks per task, selective reads and short resumable checkpoints. TODO
+tracks block progress and preserves reported MCP-01 results without rerunning them.
+
+Validation: checked document consistency, block order, parent-task statuses and
+preservation of the six-tool contract and Git restrictions. No implementation,
+code tests, endpoint probes, Git mutations or personal configuration edits were
+performed for this documentation update.
+
+## 2026-09-25 - MCP-02.1 - Document configuration loader
+
+Status: block MCP-02.1 implemented; parent MCP-02 `in_progress`
+
+Changed: `config.py` gained a frozen `DocumentConfig` dataclass (`pdf_path`,
+`run_dir` as `Path`) and `load_document_config()`, which reads
+`PDF_INGESTION_PDF` and `PDF_INGESTION_RUN_DIR` (both required), resolves
+relative paths against the working directory (spaces preserved), and rejects a
+missing or non-file PDF, an unusable PDF (checked with a PyMuPDF context
+manager, page count only, no content extraction) and a run-directory path that
+is an existing file. A missing run directory is allowed; nothing is created
+and no model settings are read. New `tests/test_config.py` covers missing
+settings, missing PDF, directory-as-PDF, garbage and empty PDF bytes, run path
+pointing to a file, a valid config with spaces and a not-yet-existing run
+directory, an existing run directory, and relative paths resolved against a
+patched cwd. Existing configuration consumers (`workspace`, `scratch_base`,
+`load_section`) and server startup are unchanged; the helper is not advertised
+as a server feature yet (bound in block MCP-02.2).
+
+Validation: `python -m unittest discover -s tests -p "test_config.py" -q` → 10
+tests, all OK (repository venv). `ruff check` on the two changed files: clean.
+`basedpyright` on the two changed files: 0 errors, 0 warnings, 0 notes.
+`vulture` on `src/reviewer_mcp`: clean. Task-wide checks (full suite,
+`git diff --check`) are deferred to block MCP-02.3 per the assigned scope.
+
+Limitations: none observed within the block; remaining MCP-02 blocks pending.
+
+Next: owner review of the diff; assign block MCP-02.2 (startup/store binding
+and the six tool signatures).
+
+## 2026-09-25 - MCP-02.2 - Bind startup, store and six tool signatures
+
+Status: block MCP-02.2 implemented; parent MCP-02 `in_progress`
+
+Changed: `server.py` gained `bind_document()`, which loads and validates the
+`DocumentConfig` from the environment once and retains it for the process
+lifetime; `main()` calls it before `run_server(mcp)`, and in-process tests use
+the same path after patching the environment. `_open()` takes no paper
+argument and always opens the bound PDF with the bound run directory; `paper`
+was removed from all six tool signatures and from the INSTRUCTIONS/module
+docstrings, and the `Paper` alias was dropped. `store.py`: `PaperStore.open`
+gained a keyword-only `run_dir` parameter; the database still lives at
+`<base>/store/<sha256[:16]>/paper.sqlite` under the given run directory, or
+under the legacy scratch base when omitted (internal extractor tests keep
+working); cache keys and rebuild logic are unchanged. `papers.py`:
+`resolve_paper` removed and the overview now adds `document_id` from the
+existing store fingerprint (no new hashing). `config.py`: legacy `workspace`
+and `DEFAULT_PAPERS_DIR` dropped (no retained callers). `tests/test_server.py`
+binds a fixture per test (`bind_paper`), patches the two settings per test,
+closes stores before temporary cleanup, passes the new settings to the stdio
+launch, asserts that no tool schema exposes `paper`, and adds
+`test_document_binding_survives_environment_changes` (environment re-pointed
+after initialization does not change the instance's document or run
+directory). `tests/test_store.py` adds
+`test_explicit_run_dir_places_the_store_inside_it`. README now documents
+`PDF_INGESTION_PDF`/`PDF_INGESTION_RUN_DIR` as the launch settings; readers
+still default to the manuscript part and budgets still apply.
+
+Validation: `python -m unittest discover -s tests -p "test_server.py" -q` 12
+tests OK; `-p "test_store.py" -q` 11 run: 10 OK, 1 failure pre-existing on
+this Windows machine (chmod 0o700 not enforced,
+`test_store_location_permissions_and_cache`), 1 skip (corpus, no
+`REVIEWER_WORKSPACE`); the new placement test passes. `-p "test_config.py" -q`
+10 tests OK. `ruff check .` clean; `basedpyright` 0 errors, 0 warnings, 0
+notes; `vulture` clean. Task-wide checks (full suite, `git diff --check`) and
+two-process isolation tests are deferred to block MCP-02.3.
+
+Limitations: two-process isolation and startup rejection of invalid
+configuration are not yet tested end-to-end (block MCP-02.3); the pre-existing
+Windows chmod failure and corpus skips remain unchanged.
+
+Next: owner review of the diff; assign block MCP-02.3 (process isolation
+checks and task closure).
+
+## 2026-09-25 - MCP-02.3 - Verify process isolation and close MCP-02
+
+Status: block MCP-02.3 implemented; parent MCP-02 `review_pending` (owner
+acceptance pending)
+
+Changed: new `tests/test_document_binding.py` (no source changes). It launches
+two real stdio server processes (existing `StdioTransport` pattern, bounded
+`asyncio.wait_for` timeouts) bound to two synthetic PyMuPDF-built PDFs that
+share the filename `same_name.pdf` in separate folders, with distinct run
+directories and distinguishable text, and no model settings: each
+`get_paper_overview` `document_id` equals the SHA-256 of its own PDF bytes and
+each `read_pages(first_page=1, last_page=2, part='all')` returns only its own
+marker text; each store exists only under its own run directory at
+`<run_dir>/store/<sha256[:16]>/paper.sqlite`. Startup rejection runs the real
+entry point via `subprocess.run` (bounded timeout): missing
+`PDF_INGESTION_PDF`/`PDF_INGESTION_RUN_DIR` and an invalid (text-file) PDF both
+exit non-zero with the diagnostic on stderr, no stdio protocol output and no
+store created. A successful stdio launch with spaces in the PDF path
+(`papers with spaces/proof hi res.pdf`) serves the overview.
+
+Validation (repository venv, newly executed): focused
+`python -m unittest discover -s tests -p "test_document_binding.py" -q` — 4
+tests, all OK. Task-wide checks once: full suite
+`python -m unittest discover -s tests -p "test_*.py" -q` — **68 run, 1 failure,
+0 errors, 5 skipped** (actual output; replaces the earlier inconsistent
+test_store summary). The single failure is the pre-existing Windows issue
+`test_store.TestPaperStore.test_store_location_permissions_and_cache`
+(0o700 not enforced, `511 != 448`), unchanged by this task; the 5 skips are the
+corpus/real-PDF tests that require `REVIEWER_WORKSPACE` with the real PDFs
+(absent on this machine). `ruff check .` clean; `basedpyright` 0 errors, 0
+warnings, 0 notes; `vulture` clean; `git diff --check` no whitespace errors
+(only pre-existing LF/CRLF line-ending warnings).
+
+Limitations: the Windows chmod failure and corpus skips are baseline and
+reported separately per the block scope; not fixed here. No consumer-repository
+edits, no reader/quota/vision changes.
+
+Next: owner review and acceptance of the MCP-02 diff; suggested owner commit
+after acceptance: `feat(mcp): bind each server to one PDF and run directory`.
 
 ## Entry format for future work
 

@@ -42,9 +42,22 @@ class ServerCase(IsolatedTestCase):
         super().setUp()
         self.addCleanup(close_all)
         write_workspace(self.workspace)
+        self.run_dir = self.tmp_path / "run"
 
-    def paper(self, name):
-        return build_fixture(name, self.workspace / "papers").name
+    def bind_paper(self, name):
+        """Build fixture `name` in the workspace and bind the server process to it; return its file name."""
+        paper = build_fixture(name, self.workspace / "papers").name
+        env = mock.patch.dict(
+            os.environ,
+            {
+                "PDF_INGESTION_PDF": str(self.workspace / "papers" / paper),
+                "PDF_INGESTION_RUN_DIR": str(self.run_dir),
+            },
+        )
+        env.start()
+        self.addCleanup(env.stop)
+        server.bind_document()
+        return paper
 
 
 class TestContract(ServerCase):
@@ -53,6 +66,7 @@ class TestContract(ServerCase):
         self.assertEqual(set(tools), TOOLS)
         for tool in tools.values():
             self.assertTrue(tool.description, tool.name)
+            self.assertNotIn("paper", tool.input_schema["properties"], tool.name)
             for name, schema in tool.input_schema["properties"].items():
                 self.assertTrue(schema.get("description"), f"{tool.name}.{name} has no description")
         listed = [{"name": t.name, "description": t.description, "parameters": t.input_schema} for t in tools.values()]
@@ -72,11 +86,16 @@ class TestContract(ServerCase):
             self.assertEqual(hints(name), (True, False, True), name)
 
     def test_protocol_negotiated_over_stdio(self):
+        paper = build_fixture("ieee_single", self.workspace / "papers").name
+        env = dict(os.environ)
+        env["PDF_INGESTION_PDF"] = str(self.workspace / "papers" / paper)
+        env["PDF_INGESTION_RUN_DIR"] = str(self.tmp_path / "run")
+
         async def negotiate(mode):
             transport = StdioTransport(
                 command=sys.executable,
                 args=["-c", "from reviewer_mcp.server import main; main()"],
-                env=dict(os.environ),
+                env=env,
             )
             async with Client(transport, mode=mode) as client:
                 return client.protocol_version, len(await client.list_tools())
@@ -95,10 +114,20 @@ class TestBareWorkspace(IsolatedTestCase):
 
     def test_overview_without_legacy_reviewer_files(self):
         paper = build_fixture("ieee_single", self.workspace / "papers").name
+        env = mock.patch.dict(
+            os.environ,
+            {
+                "PDF_INGESTION_PDF": str(self.workspace / "papers" / paper),
+                "PDF_INGESTION_RUN_DIR": str(self.tmp_path / "run"),
+            },
+        )
+        env.start()
+        self.addCleanup(env.stop)
+        server.bind_document()
         self.assertFalse((self.workspace / "forms").exists())
         self.assertFalse((self.workspace / "base_review.md").exists())
         self.assertFalse(list(self.workspace.glob("papers/*.notes")))
-        view = server.get_paper_overview(paper)
+        view = server.get_paper_overview()
         self.assertEqual(view["paper"], paper)
         self.assertEqual(view["pdf_pages"], 17)
         outline = view["outline"]
@@ -110,10 +139,11 @@ class TestBareWorkspace(IsolatedTestCase):
 
 class TestReading(ServerCase):
     def test_overview_is_neutral_and_covers_the_whole_pdf(self):
-        paper = self.paper("em_revision")
+        paper = self.bind_paper("em_revision")
         (self.workspace / "papers" / f"{paper[:-4]}.notes").write_text("Check the ageing baseline.", encoding="utf-8")
-        view = server.get_paper_overview(paper)
+        view = server.get_paper_overview()
         self.assertEqual(view["paper"], paper)
+        self.assertRegex(view["document_id"], r"^[0-9a-f]{64}$")
         self.assertEqual(view["pdf_pages"], 59)
         self.assertEqual(view["title"], "Mechanism-Guided Framework for Multi-Fault Diagnosis of Battery Systems")
         for key in ("venue", "reviewer_notes", "parts", "manuscript", "round"):
@@ -128,19 +158,39 @@ class TestReading(ServerCase):
         self.assertNotIn("/", str(view["paper"]))
 
     def test_overview_allows_a_missing_title_and_reports_warnings(self):
-        view = server.get_paper_overview(self.paper("scanned"))
+        self.bind_paper("scanned")
+        view = server.get_paper_overview()
         self.assertEqual(view["pdf_pages"], 1)
         self.assertEqual(view["title"], "")
         self.assertEqual(view["outline"], [])
         self.assertEqual(view["numbered_items"], {})
         self.assertEqual(len(view["warnings"]), 1)
 
+    def test_document_binding_survives_environment_changes(self):
+        """An initialized instance keeps its document and run directory when the environment changes."""
+        paper = self.bind_paper("ieee_single")
+        first = server.get_paper_overview()
+        other = build_fixture("em_revision", self.workspace / "papers").name
+        other_run = self.tmp_path / "other-run"
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PDF_INGESTION_PDF": str(self.workspace / "papers" / other),
+                "PDF_INGESTION_RUN_DIR": str(other_run),
+            },
+        ):
+            second = server.get_paper_overview()
+        self.assertEqual(second["paper"], paper)
+        self.assertEqual(second["document_id"], first["document_id"])
+        self.assertFalse(other_run.exists(), "the bound run directory is not re-read from the environment")
+        self.assertTrue(any((self.run_dir / "store").glob("*/paper.sqlite")))
+
     def test_read_pages_returns_every_page_once(self):
-        paper = self.paper("ieee_single")
+        paper = self.bind_paper("ieee_single")
         texts, cursor, calls = [], None, 0
         with mock.patch.object(reading, "READ_BUDGET", 1500):
             while True:
-                reply = server.read_pages(paper, cursor=cursor)
+                reply = server.read_pages(cursor=cursor)
                 texts.append(reply)
                 calls += 1
                 cursor = re.match(r"Pages \S+ \(manuscript = pages 4-17\)\. next: (\S+)", reply).group(1)
@@ -149,7 +199,7 @@ class TestReading(ServerCase):
         joined = "\n".join(texts)
         self.assertGreater(calls, 2)
         self.assertEqual(sorted({int(n) for n in re.findall(r"=== Page (\d+) ===", joined)}), list(range(4, 18)))
-        store = PaperStore.open(self.workspace / "papers" / paper)
+        store = PaperStore.open(self.workspace / "papers" / paper, run_dir=self.run_dir)
         reference_lines = {
             line
             for entry in store.paragraphs(4, 17)
@@ -164,80 +214,80 @@ class TestReading(ServerCase):
                 else:
                     self.assertIn(line["text"], joined)
         self.assertIn(reading.REFERENCES_OMITTED, joined)
-        again = server.read_pages(paper)
+        again = server.read_pages()
         self.assertTrue(again.startswith("Pages 4-17 were already returned."), again)
-        self.assertTrue(server.read_pages(paper, first_page=10, last_page=17).startswith("Pages 10-17 were already"))
-        everything = server.read_pages(paper, first_page=16, last_page=17, part="all")
+        self.assertTrue(server.read_pages(first_page=10, last_page=17).startswith("Pages 10-17 were already"))
+        everything = server.read_pages(first_page=16, last_page=17, part="all")
         self.assertNotIn(reading.REFERENCES_OMITTED, everything)
         self.assertIn("[1]", everything)
         with self.assertRaisesRegex(ToolError, r"outside this PDF \(17 pages; manuscript = pages 4-17\)"):
-            server.read_pages(paper, first_page=40)
-        server.get_paper_overview(paper)  # a new reading session may read everything again
-        self.assertTrue(server.read_pages(paper).startswith("Pages 4-"))
+            server.read_pages(first_page=40)
+        server.get_paper_overview()  # a new reading session may read everything again
+        self.assertTrue(server.read_pages().startswith("Pages 4-"))
 
     def test_sections_and_search(self):
-        paper = self.paper("ieee_single")
-        section = server.read_section(paper, "ii. related work")
+        self.bind_paper("ieee_single")
+        section = server.read_section("ii. related work")
         status, _, text = section.partition("\n\n")
         self.assertTrue(status.startswith("Section II RELATED WORK (level 1, pages "), status)
         self.assertTrue(text)
         with self.assertRaisesRegex(ToolError, "INTRODUCTION"):
-            server.read_section(paper, "Discussion of results")
-        hits = server.search_paper(paper, "Fig")
+            server.read_section("Discussion of results")
+        hits = server.search_paper("Fig")
         self.assertGreaterEqual(hits["total_hits"], 3)
         self.assertTrue(all(4 <= hit["page"] <= 17 for hit in hits["hits"]))
 
 
 class TestAssets(ServerCase):
     def test_list_and_inspect_items(self):
-        paper = self.paper("ieee_single")
-        listing = server.list_assets(paper)
+        self.bind_paper("ieee_single")
+        listing = server.list_assets()
         self.assertEqual(listing["counts"]["figure"], 3)
         self.assertIn("figure:3", listing["uncited"])
         self.assertTrue(all(item["id"].split(":")[0] != "reference" for item in listing["items"]))
-        table = run(lambda client: client.call_tool("get_asset", {"paper": paper, "asset": "table:I"}))
+        table = run(lambda client: client.call_tool("get_asset", {"asset": "table:I"}))
         detail = json.loads(table.content[0].text)
         self.assertTrue(detail["content"].startswith("|"))
         self.assertTrue(detail["cited_by"])
         self.assertEqual(detail["image"], "not requested")
         with self.assertRaisesRegex(ToolError, "list_assets"):
-            server.get_asset(paper, "figure:99")
+            server.get_asset("figure:99")
 
     def test_items_are_returned_once_within_the_budget(self):
-        paper = self.paper("ieee_single")
-        server.get_paper_overview(paper)
+        self.bind_paper("ieee_single")
+        server.get_paper_overview()
         override = self.tmp_path / "two_items.json"
         override.write_text(json.dumps({"replies": {"asset_budget": 2}}), encoding="utf-8")
 
         def reply(asset):
-            return server.get_asset(paper, asset)[0].text
+            return server.get_asset(asset)[0].text
 
         with mock.patch.dict(os.environ, {"REVIEWER_CONFIG": str(override)}):
             self.assertEqual(json.loads(reply("figure:1"))["id"], "figure:1")
             self.assertEqual(reply("figure:1"), "figure:1 was already returned.")
             self.assertEqual(json.loads(reply("table:I"))["id"], "table:I")
             self.assertIn("The budget of 2 items is used (figure:1, table:I)", reply("figure:2"))
-            server.get_paper_overview(paper)  # a new reading session restores the budget
+            server.get_paper_overview()  # a new reading session restores the budget
             self.assertEqual(json.loads(reply("figure:2"))["id"], "figure:2")
 
     def test_budget_holds_for_parallel_calls(self):
-        paper = self.paper("ieee_single")
-        server.get_paper_overview(paper)
+        paper = self.bind_paper("ieee_single")
+        server.get_paper_overview()
         override = self.tmp_path / "two_items.json"
         override.write_text(json.dumps({"replies": {"asset_budget": 2}}), encoding="utf-8")
         ids = ["figure:1", "figure:2", "figure:3", "table:I"] * 3
         with mock.patch.dict(os.environ, {"REVIEWER_CONFIG": str(override)}), ThreadPoolExecutor(len(ids)) as pool:
-            replies = list(pool.map(lambda asset: server.get_asset(paper, asset)[0].text, ids))
+            replies = list(pool.map(lambda asset: server.get_asset(asset)[0].text, ids))
         self.assertEqual(sum(reply.startswith("{") for reply in replies), 2)
-        stored = PaperStore.open(self.workspace / "papers" / paper).get_state(ASSETS_KEY) or ""
+        stored = PaperStore.open(self.workspace / "papers" / paper, run_dir=self.run_dir).get_state(ASSETS_KEY) or ""
         self.assertEqual(len(stored.split(",")), 2)
 
     def test_images_follow_vision_mode_and_budget(self):
-        paper = self.paper("ieee_single")
-        server.get_paper_overview(paper)
+        self.bind_paper("ieee_single")
+        server.get_paper_overview()
 
         def figure(client):
-            return client.call_tool("get_asset", {"paper": paper, "asset": "figure:1", "include_image": True})
+            return client.call_tool("get_asset", {"asset": "figure:1", "include_image": True})
 
         disabled = run(figure)  # images are off in the packaged config
         self.assertEqual([type(c).__name__ for c in disabled.content], ["TextContent"])
@@ -248,7 +298,7 @@ class TestAssets(ServerCase):
             kinds = [[type(c).__name__ for c in run(figure).content] for _ in range(5)]
             self.assertEqual(kinds[0], ["TextContent", "ImageContent"])
             self.assertEqual(kinds[4], ["TextContent"])
-            server.get_paper_overview(paper)  # a new reading session restores the budget
+            server.get_paper_overview()  # a new reading session restores the budget
             self.assertEqual([type(c).__name__ for c in run(figure).content], ["TextContent", "ImageContent"])
 
 

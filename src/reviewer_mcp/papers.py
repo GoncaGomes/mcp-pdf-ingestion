@@ -1,6 +1,6 @@
-"""Paper handles for the tools: the PDF named by the agent, its parts, title and overview.
+"""Parts, title and overview of the document bound to the server process.
 
-Tools address a paper by its file name in ``papers/``; a path is accepted but never returned. Page numbers are PDF page
+The server binds one configured PDF per process (see ``config.DocumentConfig``); page numbers are PDF page
 numbers everywhere.
 """
 
@@ -11,7 +11,6 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from reviewer_mcp.config import DEFAULT_PAPERS_DIR, workspace
 from reviewer_mcp.heuristics import SAME_SIZE
 from reviewer_mcp.store import PaperStore
 
@@ -24,20 +23,6 @@ PAGES_READ_KEY = "pages_returned"  # pages read_pages returned whole during the 
 
 class ReviewError(ValueError):
     """A request the agent can correct; the message says how."""
-
-
-def resolve_paper(paper: str) -> Path:
-    """The PDF named by the agent: a file name in papers/ (a path is also accepted)."""
-    papers_dir = workspace() / DEFAULT_PAPERS_DIR
-    given = Path(paper.strip())
-    for path in (papers_dir / given.name, given if given.is_absolute() else workspace() / given):
-        if given.name and path.is_file() and path.suffix.lower() == ".pdf":
-            return path.resolve()
-    available = sorted(p.name for p in papers_dir.glob("*.pdf")) if papers_dir.is_dir() else []
-    raise ReviewError(
-        f"Paper {given.name[:120]!r} is not in papers/. Available papers: {available[:20]}. "
-        "Pass the PDF file name exactly as given in the task."
-    )
 
 
 def page_span(first: int, last: int) -> str:
@@ -89,6 +74,7 @@ def overview(store: PaperStore, pdf: Path) -> dict[str, Any]:
     assets = store.assets()
     reply: dict[str, Any] = {
         "paper": pdf.name,
+        "document_id": store.meta()["fingerprint"],
         "pdf_pages": store.page_count,
         "title": title(store),
         "outline": outline,

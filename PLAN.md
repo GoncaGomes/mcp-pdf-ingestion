@@ -2,6 +2,9 @@
 
 Prepared: 2026-09-24. Repository: `GoncaGomes/mcp-pdf-ingestion`.
 Inspected baseline: `14390e0a0b863d8b1c02bb51e85f0537b556a130`.
+Execution guidance revised: 2026-09-25, against branch commit
+`371317499d1df0e57757697a46700ecb471c8216`. MCP-01 and its review fixes are
+implemented; TODO records acceptance separately from implementation.
 
 ## 1. Purpose and boundaries
 
@@ -142,25 +145,35 @@ Use existing libraries unless a task explicitly says otherwise.
 
 ### Thread and commit workflow
 
-Each numbered task below is one implementation thread and one intended owner-made
-commit, including its code, tests and documentation updates. Use the full task
-heading as the thread title. MCP-08A/B, MCP-09A/B and MCP-11A/B are separate tasks,
-threads and commits. Follow the listed order; do not combine adjacent tasks.
+Each numbered task is a deliverable and one intended owner-made commit containing
+code, tests and documentation. A task may contain several implementation blocks,
+each assigned to a fresh thread. Use task ID + block ID/title as the thread title.
+Blocks such as MCP-02.1 are not new top-level tasks or mandatory commits.
+MCP-08A/B, MCP-09A/B and MCP-11A/B remain separate top-level tasks.
 
-Start a fresh thread for each new task. Keep review corrections in that task's
-thread and commit. If context runs low, record a concise TODO resume note and
-continue the same task in a fresh thread; this does not create another task or
-require an extra commit. Do not expand scope merely to finish in one session.
+Implement only the assigned block. Intermediate handoffs keep the parent task
+`in_progress`, record completed blocks and checks in TODO, and stop. Mark the
+parent `review_pending` only after all blocks and final checks are complete.
+Owner acceptance permits `done`; a passing test or a published commit does not
+imply acceptance. The owner handles Git and assigns the next block/task.
 
-At handoff, mark `review_pending`, report checks and give the suggested commit
-message at the end of the task. The owner reviews, requests corrections if needed,
-then explicitly accepts. Only then may the coding agent record `done` and update
-the next-task pointer, without starting it. The owner creates the commit before
-assigning the next task. Never claim a commit exists without evidence.
+If context becomes tight, record a checkpoint before changing threads. Resume the
+same block from the diff and TODO, without repeating the initial exploration.
+Do not create a commit for an incomplete block merely to preserve a conversation.
+Review fixes may be separate owner commits when the original task is already
+committed; never rewrite Git history to enforce a one-commit convention.
 
-Commit messages below are suggestions, not executable instructions. A blocked or
-partially verified task is not a completed commit boundary. MCP-11B may contain
-only documentation and authorized probe evidence; do not invent code changes.
+### Implementation block format
+
+Before assignment, describe a block with: observable goal; prerequisite; exact
+starting files/functions; 3-6 implementation steps; focused checks; exclusions;
+and stop condition. Specify observable results and architectural decisions, while
+leaving routine local implementation choices to the coding agent.
+
+MCP-02 is detailed below against the current code. Later tasks retain their scope
+and acceptance criteria; refine their blocks against the then-current source when
+assigned. Do not implement an entire unassigned task from a broad backlog entry.
+The coding agent must not expand or redesign the plan on its own.
 
 ### MCP-01 - Expose six neutral tools
 
@@ -189,19 +202,98 @@ missing title is allowed; document extraction tests remain useful.
 
 ### MCP-02 - Bind one PDF and run directory
 
-**Files:** `config.py`, `papers.py`, `server.py`, `runner.py` if needed;
-`tests/pdf_fixtures.py`, `tests/test_server.py`, focused `tests/test_config.py`.
+**Goal:** bind each server process to one PDF and one run directory. Public tools
+must not accept a filename or resolve a different document from the workspace.
+**Prerequisite:** owner acceptance of MCP-01. Execute blocks 02.1, 02.2, 02.3 in
+order, one assigned block per thread. No new dependencies are required.
+**Read:** section 3, Document and execution, and the tool argument table. Pagination,
+asset IDs and visual execution are not part of this task.
 
-**Changes:** load the two document/run settings at startup; have `_open()` resolve
-only that configured file. Remove `paper` from all six public signatures. Root the
-existing store in the configured run directory. Remove workspace filename fallback.
-Fixtures set isolated configuration; no real workspace or user temp directory.
+#### MCP-02.1 - Load and validate document configuration
 
-**Verify:** missing configuration, invalid PDF, names with spaces, and two isolated
-processes with different PDFs having the same filename. Source identity and answers
-must match. Text tools need no model credentials.
-**Stop:** configuration binds each server to one document. No session manager or
-consumer-repository changes. Existing reader quotas disappear in later tasks.
+**Start:** `config.py` (`workspace`, `scratch_base`, `load_section`); add
+`tests/test_config.py`. Do not read extraction modules for this block.
+
+**Implement:**
+1. Add a small immutable configuration value holding `pdf_path` and `run_dir`
+   (`dataclasses.dataclass(frozen=True)` and `pathlib.Path` are sufficient), with
+   one loader for `PDF_INGESTION_PDF` and `PDF_INGESTION_RUN_DIR`.
+2. Require both values. Resolve relative paths against startup cwd; preserve spaces
+   in names. Reject a missing/non-file PDF, a run path that is already a file,
+   and an unreadable/invalid PDF. Use existing PyMuPDF with a context manager to
+   check that the document is a usable PDF with pages; do not extract its content.
+3. Return resolved paths. Do not create indexes/images or load model settings.
+   A missing run directory may be created by persistence when needed.
+4. Leave existing startup and configuration consumers unchanged in this block.
+   This is a tested helper for block 02.2, not an advertised server feature.
+
+**Check:** `python -m unittest discover -s tests -p "test_config.py" -q`.
+Cover absent settings, missing PDF, invalid PDF content, run path pointing to a
+file, and a valid PDF/path containing spaces. Use temporary paths and patch only
+the relevant environment settings. No real user workspace or credentials.
+**Stop:** helper and focused tests pass. Parent remains `in_progress`; checkpoint
+names the configuration type/loader for the next block. No server/test migration.
+
+#### MCP-02.2 - Bind startup, store and six tool signatures
+
+**Start:** block 02.1 helper; `server.py` (`main`, `_open`, `Paper`, six tools and
+`INSTRUCTIONS`); `papers.py` (`resolve_paper`); `store.py` (`PaperStore.open` and
+its database path calculation); relevant setup/calls in `tests/test_server.py`.
+Read `runner.py` only if startup cannot be connected in `server.main`.
+
+**Implement:**
+1. Load/validate configuration once before `run_server(mcp)` starts serving.
+   Retain that configuration for `_open()`; do not reread document settings on
+   tool calls or at module import. Give in-process tests one explicit setup path
+   using the same initialization logic. No session manager or agent factory.
+2. Change `_open()` to take no paper argument and open only the bound PDF. Add
+   an explicit keyword-only run-directory parameter to `PaperStore.open` so the
+   server supplies its bound location instead of relying on mutable environment.
+   Preserve existing fingerprint subdirectories, cache keys and rebuild logic.
+   An optional default may retain internal extractor-test callers; the server
+   must always pass its run directory and must never use the legacy fallback.
+3. Remove `paper` from all six public signatures and their internal `_open` calls.
+   Update tool/server descriptions. Remove `resolve_paper` and the `Paper` alias
+   once unreferenced; remove other legacy helpers only if no retained caller uses
+   them. Corpus fixture settings are not a reason to migrate all tests now.
+4. Adapt in-process tests and existing stdio launch setup to provide a PDF/run
+   configuration. Patch it per test; close stores before temporary cleanup.
+   Preserve reader algorithms, response shapes, manuscript defaults and quotas.
+5. Verify the overview identifies the selected source (retain its filename and
+   add `document_id` from the existing store fingerprint). Update README's launch
+   settings now; do not claim later pagination or vision behavior is available.
+
+**Check:** focused config/server tests plus a store test for explicit run-directory
+placement. Assert six schemas with no `paper`, successful overview/read of the
+bound document, and unchanged document binding after environment changes within
+one initialized instance. Existing stdio tests must launch with the new settings.
+**Stop:** tools work with the configured PDF and store location; parent remains
+`in_progress`. Record changed functions and checks; no unrelated parser cleanup.
+
+#### MCP-02.3 - Verify process isolation and close the task
+
+**Start:** block 02.2 diff/checkpoint, `tests/test_server.py` (existing
+`StdioTransport` pattern), `tests/pdf_fixtures.py` (`build_fixture`, isolation
+helpers). Add `tests/test_document_binding.py` if separate cases improve focus.
+
+**Implement/check:**
+1. Launch two real stdio server processes with different PDFs that have the same
+   filename and distinct run directories. Use distinguishable synthetic content;
+   assert each overview/document ID and page read matches its configured source.
+   Confirm each process writes its store only under its own run directory.
+2. Verify startup rejects missing/invalid configuration before tools can serve.
+   Use bounded subprocess timeouts and cleanup; do not add process-management
+   infrastructure. Test a filename with spaces and text access without VLM settings.
+3. Run the full checks from AGENTS once after the focused binding tests. Report
+   known Windows chmod failures and corpus skips separately; do not fix them here
+   unless this change introduces a new regression in the affected behavior.
+4. Complete README, TODO and HISTORY updates with actual results. Mark MCP-02
+   `review_pending` only when all blocks meet their checks and remaining baseline
+   failures are explicitly identified for review.
+
+**Stop:** one configured PDF per process, correct isolated persistence, no public
+filename selection. No consumer-repository edits, pagination redesign, quota
+removal, vision or package rename. Present the single parent-task commit below.
 
 **Suggested owner commit after acceptance:**
 `feat(mcp): bind each server to one PDF and run directory`

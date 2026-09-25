@@ -1,13 +1,16 @@
 # MCP PDF ingestion task status
 
-Updated: 2026-09-24. Scope: this repository only.
+Updated: 2026-09-25. Scope: this repository only.
 Read `AGENTS.md` and the selected task in `PLAN.md` before editing.
 
 ## Current work
 
-- Active task: **MCP-01** — implemented 2026-09-24, `review_pending`.
-- Next task after acceptance: **MCP-02**.
-- Implementation started under this plan: yes (MCP-01).
+- Active task: **MCP-02** — `review_pending` (all blocks implemented, owner
+  acceptance pending) since 2026-09-25.
+- Prior task: **MCP-01** — implemented 2026-09-24, `review_pending`.
+- Last implementation block: **MCP-02.3** — implemented 2026-09-25, task-wide
+  checks passed (see checkpoint below).
+- Implementation started under this plan: yes (MCP-01, MCP-02).
 - The owner and planning chat prepared the documents; MCP-00 is not an implementation task.
 
 Statuses: `pending`, `in_progress`, `review_pending`, `done`, `blocked`.
@@ -17,20 +20,21 @@ and stop. Owner acceptance does not authorize Git operations.
 
 ## Thread and commit tracking
 
-One task row = one fresh implementation thread = one intended owner-made commit.
-Use the corresponding PLAN heading as the thread title; the suggested commit
-message appears at the end of that task. Keep corrections with the same task.
-After explicit owner acceptance, record `done` and the next pending task, then
-stop. The owner commits before assigning the next thread. Do not infer acceptance
-from tests passing or from the presence of a commit. No implementation commits have
-been recorded under this plan.
+One task row is a deliverable, usually one owner-made commit. A task can span
+several assigned blocks/threads. Intermediate blocks leave the parent `in_progress`;
+only the final block can mark it `review_pending`. Owner acceptance permits `done`.
+Do not automatically start the next block. Use PLAN for scope and commit messages.
+
+Observed branch: `feat/pdf-evidence-tool`, head
+`371317499d1df0e57757697a46700ecb471c8216`. MCP-01 implementation is committed as
+`a756b7c`; review fixes are committed as `3713174`. Acceptance remains separate.
 
 ## Tasks
 
 | ID | Deliverable | Status |
 | --- | --- | --- |
-| MCP-01 | Six neutral tools, no reviewer policy | review_pending |
-| MCP-02 | One configured PDF and isolated run directory | pending |
+| MCP-01 | Six neutral tools, no reviewer policy | done |
+| MCP-02 | One configured PDF and isolated run directory | review_pending |
 | MCP-03 | Repeatable, complete page reads | pending |
 | MCP-04 | Complete section reads by ID | pending |
 | MCP-05 | Paginated textual search | pending |
@@ -46,6 +50,17 @@ been recorded under this plan.
 
 Dependencies follow table order. The owner may perform the external SDK checkpoint
 after MCP-03; the coding agent does not modify that consumer repository.
+
+## MCP-02 implementation blocks
+
+| Block | Deliverable | Progress |
+| --- | --- | --- |
+| MCP-02.1 | Configuration loader and focused tests | implemented |
+| MCP-02.2 | Startup/store binding and six tool signatures | implemented |
+| MCP-02.3 | Process isolation checks and task closure | implemented |
+
+Block progress: `pending`, `in_progress`, `implemented`, `blocked`. `implemented`
+means its specified checks passed; it does not mean owner acceptance of the task.
 
 ## Blockers and external evidence
 
@@ -68,18 +83,20 @@ after MCP-03; the coding agent does not modify that consumer repository.
 
 ## Resume note
 
-MCP-01 is implemented and `review_pending` (2026-09-24); both review findings are
-fixed in the same working-tree diff. Files:
-`src/reviewer_mcp/server.py`, `papers.py`, `config.py`; deleted reviewer-only
-`forms.py`, `profile.py`, `reports.py`, `responses.py`, `validator.py`, `venues.py`;
-rewrote `tests/test_server.py`, adapted `tests/test_fixtures.py`; deleted
-`tests/test_venues.py` and `tests/test_guidelines_validator.py`; updated
-`README.md`. Review corrections (2026-09-24): the three stateful tools in
-`server.py` now carry the corrected annotations (`get_paper_overview`:
-readOnlyHint=False/destructiveHint=True/idempotentHint=True; `read_pages` and
-`get_asset`: all False); the contract test asserts the exact hint triples for all
-six tools; new `TestBareWorkspace` regression test proves `get_paper_overview`
-works with only the PDF under `papers/`. Checks: full suite 52 tests (46 ok, 1
-pre-existing Windows chmod failure, 5 corpus skips), ruff clean, basedpyright 0,
-vulture clean, `git diff --check` clean. Next: owner review of the working-tree
-diff and acceptance; the coding agent performs no Git operations.
+- Task: MCP-02 (`review_pending`); final block MCP-02.3 implemented 2026-09-25.
+- New `tests/test_document_binding.py` (no source changes): two real stdio
+  processes serve two same-named synthetic PDFs from separate folders with
+  distinct run dirs — each `document_id` matches its own PDF's SHA-256, each
+  `read_pages(1..2, part='all')` returns only its own markers, each store
+  exists only under its own run dir. Startup rejection (missing settings,
+  invalid PDF) exits non-zero with a stderr diagnostic before serving; a
+  launch with spaces in the PDF path serves normally. Bounded timeouts, no
+  new process infrastructure.
+- Checks (repo venv, newly run): focused test_document_binding 4/4 OK; full
+  suite 68 run, 1 failure, 0 errors, 5 skipped — failure is the pre-existing
+  Windows chmod issue (`test_store_location_permissions_and_cache`, 511 != 448);
+  skips are corpus tests without `REVIEWER_WORKSPACE`. `ruff check .` clean,
+  `basedpyright` 0/0/0, `vulture` clean, `git diff --check` no whitespace
+  errors. README unchanged (binding already documented in MCP-02.2).
+- Next: owner review/acceptance of the MCP-02 diff; suggested commit after
+  acceptance: `feat(mcp): bind each server to one PDF and run directory`.

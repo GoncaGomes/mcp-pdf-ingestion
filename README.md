@@ -7,8 +7,9 @@ the consuming agent decides what to read and how to use it.
 
 ## Key Features
 
-* **Deterministic paper store**: one PyMuPDF pass per PDF into a SQLite store in `$REVIEWER_SCRATCH_BASE` (default
-  `/tmp/reviewer`), keyed by the PDF content. Pages, lines, paragraphs, sections, full-text search, submission parts and
+* **Deterministic paper store**: one PyMuPDF pass per PDF into a SQLite store in the server's run directory
+  (`$PDF_INGESTION_RUN_DIR/store/<fingerprint>/paper.sqlite`), keyed by the PDF content. Pages, lines, paragraphs,
+  sections, full-text search, submission parts and
   numbered items (figures, tables, equations, algorithms, listings, references) with their citations. No LLM involved.
 * **Numbered items read the way they are printed**: a caption is a label, a separator and the caption text
   (`Fig. 1. Evolution ...`, `Table 4: Benchmark datasets`), or a label alone on its line whose text is the line below
@@ -21,12 +22,12 @@ the consuming agent decides what to read and how to use it.
   table ruled on every row behave alike. Items report a page span (`"15-16"`).
 * **Layout rules relative to each document**: tolerances are factors of the measured body size and line height
   (`src/reviewer_mcp/config.json`, overridable with `REVIEWER_CONFIG`).
-* **No files exposed**: tools take the PDF file name and PDF page numbers; no scratch paths in any reply.
+* **No files exposed**: tools operate on the server's bound PDF with PDF page numbers; no scratch paths in any reply.
 * **MCP protocol `2026-07-28`**, negotiated natively by fastmcp 4.
 
 ## Tools (6)
 
-1. `get_paper_overview` — start here: document identity, page count, extracted title when one is found, the full-PDF
+1. `get_paper_overview` — start here: document identity (file name and content fingerprint), page count, extracted title when one is found, the full-PDF
    outline with section ids, numbered-item counts and extraction warnings.
 2. `read_pages` — whole pages with a continuation cursor (primary reader); pages already returned since the last
    `get_paper_overview` are not sent again.
@@ -38,17 +39,20 @@ the consuming agent decides what to read and how to use it.
    most `replies.asset_budget` (6) items per overview, each once.
 
 This is the current behaviour. The readers still default to the detected manuscript part, and the asset/image budgets
-still apply. Binding one configured PDF and run directory per server, whole-PDF reads by default, unambiguous asset
-ids and explicit visual questions in `get_asset` come in the later tasks of `PLAN.md` (MCP-02 onward); the intermediate
-states are described there, not assumed here.
+still apply. Whole-PDF reads by default, unambiguous asset ids and explicit visual questions in `get_asset` come in the
+later tasks of `PLAN.md` (MCP-03 onward); the intermediate states are described there, not assumed here.
 
 ## Environment
 
-* `REVIEWER_WORKSPACE` — directory with `papers/` (default: cwd).
-* `REVIEWER_SCRATCH_BASE` — store location (default `/tmp/reviewer`).
+* `PDF_INGESTION_PDF` — the PDF bound to the server process; required, must exist as a usable PDF (relative paths
+  are resolved against the startup working directory, spaces preserved).
+* `PDF_INGESTION_RUN_DIR` — isolated run directory for derived data; required, may not exist yet (persistence creates
+  it on demand) and must not point to an existing file.
 * `REVIEWER_CONFIG` — JSON file overriding values of `config.json`: layout factors (`heuristics`), image
   attachments (`images`: `enabled`, `budget`, `max_side`) and reply budgets (`replies`: `asset_budget`). A new
   `get_paper_overview` starts a new reading session and restores every budget.
+* `REVIEWER_SCRATCH_BASE` — legacy store base (default `/tmp/reviewer`) used only when a store is opened without an
+  explicit run directory (internal extractor tests); the server always uses its bound run directory.
 
 ## Development
 

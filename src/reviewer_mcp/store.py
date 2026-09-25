@@ -1,7 +1,8 @@
 """Per-paper SQLite store: extraction results are persisted once and queried per request.
 
-The store lives in `<scratch>/store/<sha256[:16]>/paper.sqlite`, keyed by the PDF content, so a
-replaced PDF with the same name gets a fresh store and two different PDFs never share one. It is
+The store lives in `<run-dir>/store/<sha256[:16]>/paper.sqlite` (under the legacy scratch base when a store is
+opened without a run directory), keyed by the PDF content, so a replaced PDF with the same name gets a fresh
+store and two different PDFs never share one. It is
 rebuilt when EXTRACTOR_VERSION or the PyMuPDF version changes. Builds write to a temporary file
 that is renamed into place, so an interrupted build never leaves a half-filled store. Queries
 fetch only what a request needs; nothing large is kept in memory between calls.
@@ -312,14 +313,19 @@ class PaperStore:
         self.con.row_factory = sqlite3.Row
 
     @classmethod
-    def open(cls, pdf_path: str | Path) -> PaperStore:
-        """Open the store for a PDF, building or rebuilding it when missing or stale."""
+    def open(cls, pdf_path: str | Path, *, run_dir: Path | None = None) -> PaperStore:
+        """Open the store for a PDF, building or rebuilding it when missing or stale.
+
+        The database lives under ``run_dir`` when given (the server's bound run directory) and under the legacy
+        scratch base otherwise, which keeps the internal extractor-test callers unchanged.
+        """
         pdf = Path(pdf_path).resolve()
         if not pdf.is_file():
             raise FileNotFoundError(f"PDF not found: {pdf.name}")
         with _LOCK:
             expected = _expected_meta(pdf)
-            db = scratch_base() / "store" / expected["fingerprint"][:16] / "paper.sqlite"
+            base = run_dir if run_dir is not None else scratch_base()
+            db = base / "store" / expected["fingerprint"][:16] / "paper.sqlite"
             key = str(db)
             cached = _OPEN.pop(key, None)
             if cached is not None:

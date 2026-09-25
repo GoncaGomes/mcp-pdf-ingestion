@@ -89,6 +89,15 @@ class TestPaperStore(IsolatedTestCase):
         store.set_state("manuscript", "4-17")
         self.assertEqual(PaperStore.open(pdf).get_state("manuscript"), "4-17")
 
+    def test_explicit_run_dir_places_the_store_inside_it(self):
+        pdf = build_fixture("ieee_single", self.tmp_path)
+        run_dir = self.tmp_path / "run"
+        store = PaperStore.open(pdf, run_dir=run_dir)
+        self.assertTrue(store.path.is_relative_to(run_dir))
+        self.assertEqual(store.path.parent.name, store.meta()["fingerprint"][:16])
+        self.assertEqual(store.path.name, "paper.sqlite")
+        self.assertIs(PaperStore.open(pdf, run_dir=run_dir), store)
+
     def test_same_name_different_content_gets_its_own_store(self):
         first = self.tmp_path / "a" / "paper.pdf"
         second = self.tmp_path / "b" / "paper.pdf"

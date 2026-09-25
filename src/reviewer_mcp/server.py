@@ -1,8 +1,9 @@
-"""reviewer-mcp: the tools for reading one PDF submission as evidence.
+"""reviewer-mcp: the tools for reading one configured PDF submission as evidence.
 
-Each PDF is opened once into a deterministic store (text, parts, outline, numbered items). Tools address a paper by its
-file name and PDF page numbers, and never expose files, caches or scratch paths. Descriptions and replies are kept
-short: they share the agent's context with the paper itself.
+Each server process binds to one configured PDF (``PDF_INGESTION_PDF``) with its derived data in an isolated run
+directory (``PDF_INGESTION_RUN_DIR``), loaded once at startup. The PDF is opened once into a deterministic store (text,
+parts, outline, numbered items). Tools use PDF page numbers and never expose files, caches or scratch paths.
+Descriptions and replies are kept short: they share the agent's context with the paper itself.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import json
 from collections import Counter
 from collections.abc import Callable
 from functools import wraps
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastmcp import FastMCP
@@ -20,7 +22,7 @@ from mcp.types import TextContent
 from pydantic import Field
 
 from reviewer_mcp import crops, reading
-from reviewer_mcp.config import load_section
+from reviewer_mcp.config import DocumentConfig, load_document_config, load_section
 from reviewer_mcp.papers import (
     ASSETS_KEY,
     IMAGES_KEY,
@@ -28,14 +30,13 @@ from reviewer_mcp.papers import (
     overview,
     page_span,
     part_range,
-    resolve_paper,
 )
 from reviewer_mcp.runner import run_server
 from reviewer_mcp.store import PaperStore
 
 INSTRUCTIONS = """\
-Read one PDF submission as evidence. Every tool takes 'paper', the PDF file name in papers/; page numbers are PDF page
-numbers; files, caches and extraction are handled internally.
+Read one PDF submission as evidence. The server is bound to one configured PDF; page numbers are PDF page numbers;
+files, caches and extraction are handled internally.
 - get_paper_overview: title, page count, full-PDF outline with section ids, numbered-item counts and extraction
   warnings. Call it first.
 - read_pages: whole pages in reading order; continue with the next cursor until it is none.
@@ -52,12 +53,25 @@ CAPTION_PREVIEW = 140
 
 mcp = FastMCP("reviewer", instructions=INSTRUCTIONS)
 
-Paper = Annotated[str, Field(max_length=255, description="PDF file name in papers/, as given in the task.")]
+# The document bound to this process: set once at startup (main) or once per in-process test; never reread.
+_DOCUMENT: DocumentConfig | None = None
+
 Part = Annotated[
     Literal["manuscript", "responses", "cover", "all"],
     Field(description="Pages to use: a detected part (manuscript, responses or cover) or all."),
 ]
 AssetKind = Literal["figure", "table", "equation", "algorithm", "listing", "statement", "reference"]
+
+
+def bind_document() -> DocumentConfig:
+    """Bind this process to the configured document (PDF and run directory) and return the retained configuration.
+
+    Called once by the entry point before serving, and once per in-process test after it patches the environment.
+    Tool calls use the retained configuration and never reread the document settings.
+    """
+    global _DOCUMENT
+    _DOCUMENT = load_document_config()
+    return _DOCUMENT
 
 
 def _agent_errors[F: Callable[..., Any]](func: F) -> F:
@@ -73,24 +87,26 @@ def _agent_errors[F: Callable[..., Any]](func: F) -> F:
     return wrapper  # type: ignore[return-value]
 
 
-def _open(paper: str) -> tuple[Any, PaperStore]:
-    pdf = resolve_paper(paper)
-    return pdf, PaperStore.open(pdf)
+def _open() -> tuple[Path, PaperStore]:
+    """The bound document's PDF and its store, built under the bound run directory on first use."""
+    config = _DOCUMENT
+    if config is None:
+        raise RuntimeError("no document bound: start the server with PDF_INGESTION_PDF and PDF_INGESTION_RUN_DIR")
+    return config.pdf_path, PaperStore.open(config.pdf_path, run_dir=config.run_dir)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True})
 @_agent_errors
-def get_paper_overview(paper: Paper) -> dict[str, Any]:
+def get_paper_overview() -> dict[str, Any]:
     """Call first. Returns the document identity, page count, the extracted title when one is found, the full-PDF
     outline with section ids, numbered-item counts and extraction warnings."""
-    pdf, store = _open(paper)
+    pdf, store = _open()
     return overview(store, pdf)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False})
 @_agent_errors
 def read_pages(
-    paper: Paper,
     first_page: Annotated[int | None, Field(ge=1, description="First PDF page; omit for the part's start.")] = None,
     last_page: Annotated[int | None, Field(ge=1, description="Last PDF page; omit for the part's end.")] = None,
     part: Part = "manuscript",
@@ -102,7 +118,7 @@ def read_pages(
     entries are left out (list_assets(kind='reference') lists them). The first line gives the pages returned and the
     next cursor: pass it as cursor until it is none. Pages already returned since the last get_paper_overview are not
     sent again."""
-    _, store = _open(paper)
+    _, store = _open()
     part_first, part_last = part_range(store, part)
     scope = f"{part} = pages {page_span(part_first, part_last)}"
     offset = 0
@@ -131,7 +147,6 @@ def read_pages(
 @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
 @_agent_errors
 def read_section(
-    paper: Paper,
     heading: Annotated[
         str,
         Field(
@@ -143,7 +158,7 @@ def read_section(
 ) -> str:
     """Read one outline section by its heading, up to the next heading of the same or higher level. If nothing
     matches, the error lists the headings."""
-    _, store = _open(paper)
+    _, store = _open()
     first, last = part_range(store, "manuscript")
     return reading.read_section(store, heading, first, last)
 
@@ -151,7 +166,6 @@ def read_section(
 @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
 @_agent_errors
 def search_paper(
-    paper: Paper,
     query: Annotated[
         str,
         Field(
@@ -165,7 +179,7 @@ def search_paper(
 ) -> dict[str, Any]:
     """Find where something is mentioned: the number of matching paragraphs and, per hit, PDF page, section and
     snippet."""
-    _, store = _open(paper)
+    _, store = _open()
     first, last = part_range(store, part)
     return reading.search(store, query, first, last, max_hits)
 
@@ -173,12 +187,11 @@ def search_paper(
 @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
 @_agent_errors
 def list_assets(
-    paper: Paper,
     kind: Annotated[AssetKind | None, Field(description="Only this kind; omit for all kinds but references.")] = None,
 ) -> dict[str, Any]:
     """List the numbered items of the part (default: manuscript): id, label, page, caption start and how many
     paragraphs cite it; never-cited ids under 'uncited'. Choose what to inspect with get_asset."""
-    _, store = _open(paper)
+    _, store = _open()
     first, last = part_range(store, "manuscript")
     everything = store.assets(first=first, last=last)
     shown = [a for a in everything if (a["kind"] == kind if kind else a["kind"] != "reference")]
@@ -210,7 +223,6 @@ def list_assets(
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False})
 @_agent_errors
 def get_asset(
-    paper: Paper,
     asset: Annotated[
         str,
         Field(
@@ -225,7 +237,7 @@ def get_asset(
     """Inspect one numbered item: caption and content as text (table cells as Markdown, equations as linear text and
     MathML, algorithm lines, theorem-like statements with their proof, reference entry), how it was located, and the
     sentences citing it. Each item is returned in full once until the next get_paper_overview."""
-    pdf, store = _open(paper)
+    pdf, store = _open()
     first, last = part_range(store, "manuscript")
     found = store.asset(asset, first, last)
     if found is None:
@@ -304,7 +316,8 @@ def get_asset(
 
 
 def main() -> None:
-    """Console script entry point for reviewer-mcp."""
+    """Console script entry point for reviewer-mcp: bind the configured document, then serve."""
+    bind_document()
     run_server(mcp)
 
 
