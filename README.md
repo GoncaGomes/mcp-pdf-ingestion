@@ -29,18 +29,64 @@ the consuming agent decides what to read and how to use it.
 
 1. `get_paper_overview` — start here: document identity (file name and content fingerprint), page count, extracted title when one is found, the full-PDF
    outline with section ids, numbered-item counts and extraction warnings.
-2. `read_pages` — whole pages with a continuation cursor (primary reader); pages already returned since the last
-   `get_paper_overview` are not sent again.
-3. `read_section` — one outline section by heading.
-4. `search_paper` — where a term is mentioned (page, section, snippet).
+2. `read_pages(first_page=None, last_page=None, cursor=None)` — repeatable page-labelled text, including
+   references, with exact continuation within long pages (12,000 text characters per response).
+3. `read_section(section_id, cursor=None)` — complete section text by an ID from the overview outline,
+   including subsections until the next equal/higher heading, with page provenance and continuation.
+4. `search_paper(query, first_page=None, last_page=None, cursor=None)` — paginated textual matches,
+   total matching paragraphs, source pages, section IDs/titles and snippets.
 5. `list_assets` — numbered items with pages and citation counts.
 6. `get_asset` — one item as text (caption, Markdown table, equation text, algorithm lines, reference) plus citing
    sentences, optionally a cropped image when the `images` settings of `config.json` enable it (off by default); at
    most `replies.asset_budget` (6) items per overview, each once.
 
-This is the current behaviour. The readers still default to the detected manuscript part, and the asset/image budgets
-still apply. Whole-PDF reads by default, unambiguous asset ids and explicit visual questions in `get_asset` come in the
-later tasks of `PLAN.md` (MCP-03 onward); the intermediate states are described there, not assumed here.
+Page reads and search now cover the whole PDF by default; section reads use the complete extracted outline.
+Asset/image budgets still apply; unambiguous asset IDs and explicit visual questions remain future work (MCP-06 onward).
+
+For page reads and search, bounds are inclusive: neither bound selects the whole PDF; first only selects that page;
+last only selects pages 1 through last. Invalid ranges are errors. Pass `next_cursor` unchanged until it is null;
+a cursor retains the original document and range, and conflicting explicit bounds are errors. Reads can be
+repeated or overlapped without an overview reset. Concatenating fragments per page recovers stored text exactly.
+
+```json
+{"document_id":"<fingerprint>","fragments":[{"page":1,"text":"Extracted text"}],"next_cursor":null}
+```
+
+Empty pages retain `{ "page": 1, "text": "" }` and an `empty_pages` entry with the stored `source`:
+`blank`, `none` (no text layer, e.g. image-only), or `text` (text was extracted but no body text remains).
+No OCR or inferred content is added.
+
+Section reads return the same `document_id`, `fragments` and `next_cursor` fields plus section identity:
+
+```json
+{"document_id":"<fingerprint>","section":{"id":2,"number":"1","title":"Introduction","level":1,"page":3},
+ "fragments":[{"page":3,"text":"1 Introduction\n\nSection text"}],"next_cursor":null}
+```
+
+Repeat `section_id` with the returned cursor. IDs disambiguate repeated heading titles. Concatenating fragment
+text in response order reconstructs the stored paragraphs separated by two newlines, including long paragraphs.
+Cross-page paragraphs retain each source page and the extractor's existing dehyphenation. An unknown ID is an
+error; if no outline was extracted, use page reads. Inferred manuscript boundaries do not restrict section reads.
+
+Search uses SQLite FTS phrase matching with a final-word prefix, case-insensitively: `proposed meth` finds
+`proposed method`. It is neither arbitrary substring matching nor semantic retrieval. `query` is required,
+non-blank and at most 120 characters. The internal `SEARCH_PAGE_SIZE` is 15 matching paragraph records per
+response, ordered by unique stored paragraph ID. Range filters use the paragraph's starting physical page;
+a paragraph may continue onto later pages. Total hits count matching records, not individual word occurrences.
+
+```json
+{"document_id":"<fingerprint>","query":"proposed meth","pages":"1-17","total_hits":1,
+ "hits":[{"paragraph_id":9,"page":4,"section_id":2,"section_title":"Introduction","snippet":"The [proposed method] ..."}],
+ "next_cursor":null}
+```
+
+Section fields are null when no section is available. Repeat the exact query with `next_cursor`; omitted bounds
+retain its range, while conflicting query/bounds are errors. Cursors are opaque JSON encoded with base64,
+limited to 4,096 characters, and bound to document identity and operation. They can be replayed unchanged;
+legacy page-number cursors are rejected. No cursor signing or server-side cursor state is used.
+Zero matches return `total_hits: 0`, an empty `hits` list and null continuation; they do not establish scientific
+absence. Text reads/search invoke no model. OCR, visual questions, asset quota removal and catalog/rendering
+improvements remain outside these implemented text tools. External Agents SDK verification is deferred.
 
 ## Environment
 
@@ -50,7 +96,7 @@ later tasks of `PLAN.md` (MCP-03 onward); the intermediate states are described 
   it on demand) and must not point to an existing file.
 * `REVIEWER_CONFIG` — JSON file overriding values of `config.json`: layout factors (`heuristics`), image
   attachments (`images`: `enabled`, `budget`, `max_side`) and reply budgets (`replies`: `asset_budget`). A new
-  `get_paper_overview` starts a new reading session and restores every budget.
+  `get_paper_overview` restores the remaining asset/image budgets; text reads have no consumption budget.
 * `REVIEWER_SCRATCH_BASE` — legacy store base (default `/tmp/reviewer`) used only when a store is opened without an
   explicit run directory (internal extractor tests); the server always uses its bound run directory.
 

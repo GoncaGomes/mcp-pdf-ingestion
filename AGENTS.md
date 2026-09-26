@@ -28,7 +28,7 @@ removing reviewer-only features.
 | --- | --- |
 | `server.py` | Tool registration, signatures, errors, document binding and entry point. |
 | `papers.py` | Overview, title and part helpers for the bound document. |
-| `reading.py` | Page/section reads and search responses. |
+| `reading.py` | Deterministic text reads/search, range validation and opaque continuation cursors. |
 | `store.py` (`PaperStore`) | SQLite queries, cache and persisted state. |
 | `document.py`, `indexes.py`, `structure.py` | Extraction, indexes and document segments. |
 | `assets.py`, `crops.py` | Asset detection/metadata and image rendering. |
@@ -47,6 +47,11 @@ removing reviewer-only features.
    implementation and documentation updates are authorized; no approval per edit.
 4. Run the block's focused checks and update TODO's checkpoint. Stop at the block
    boundary; do not automatically start another block or task.
+
+An explicitly assigned multi-task batch may proceed sequentially through its
+named tasks after each task's focused checks pass. Follow the batch's check
+schedule and stop at its final boundary. The single-block rule remains the default;
+batch authorization does not relax scope, acceptance or Git restrictions.
 
 A task is a deliverable; a block is an implementation step that can use its own
 thread. Intermediate blocks keep the parent `in_progress`. Only the final block

@@ -3,7 +3,6 @@
 import asyncio
 import json
 import os
-import re
 import sys
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -64,6 +63,13 @@ class TestContract(ServerCase):
     def test_tools_parameters_and_description_budget(self):
         tools = {tool.name: tool for tool in run(lambda client: client.list_tools())}
         self.assertEqual(set(tools), TOOLS)
+        for name, parameters in (
+            ("read_pages", {"first_page", "last_page", "cursor"}),
+            ("read_section", {"section_id", "cursor"}),
+            ("search_paper", {"query", "first_page", "last_page", "cursor"}),
+        ):
+            self.assertEqual(set(tools[name].input_schema["properties"]), parameters)
+            self.assertGreaterEqual(tools[name].input_schema["properties"]["cursor"]["anyOf"][0]["maxLength"], 4096)
         for tool in tools.values():
             self.assertTrue(tool.description, tool.name)
             self.assertNotIn("paper", tool.input_schema["properties"], tool.name)
@@ -71,15 +77,13 @@ class TestContract(ServerCase):
                 self.assertTrue(schema.get("description"), f"{tool.name}.{name} has no description")
         listed = [{"name": t.name, "description": t.description, "parameters": t.input_schema} for t in tools.values()]
         self.assertLessEqual(len(json.dumps(listed, ensure_ascii=False)), SCHEMA_BUDGET)
-        # read_pages and get_asset record what they return in the retained consumption ledger
-        # (not idempotent), and get_paper_overview resets it (destructive but idempotent);
-        # none of them can claim read-only.
+        # Asset consumption and overview resets remain until MCP-06.
         def hints(name):
             a = tools[name].annotations
             return (a.read_only_hint, bool(a.destructive_hint), a.idempotent_hint)
 
         self.assertEqual(hints("get_paper_overview"), (False, True, True))
-        self.assertEqual(hints("read_pages"), (False, False, False))
+        self.assertEqual(hints("read_pages"), (True, False, True))
         self.assertEqual(hints("get_asset"), (False, False, False))
         # only the pure reads claim read-only
         for name in ("read_section", "search_paper", "list_assets"):
@@ -185,57 +189,69 @@ class TestReading(ServerCase):
         self.assertFalse(other_run.exists(), "the bound run directory is not re-read from the environment")
         self.assertTrue(any((self.run_dir / "store").glob("*/paper.sqlite")))
 
-    def test_read_pages_returns_every_page_once(self):
+    def test_read_pages_are_repeatable_and_complete(self):
         paper = self.bind_paper("ieee_single")
-        texts, cursor, calls = [], None, 0
-        with mock.patch.object(reading, "READ_BUDGET", 1500):
-            while True:
-                reply = server.read_pages(cursor=cursor)
-                texts.append(reply)
-                calls += 1
-                cursor = re.match(r"Pages \S+ \(manuscript = pages 4-17\)\. next: (\S+)", reply).group(1)
-                if cursor == "none":
-                    break
-        joined = "\n".join(texts)
-        self.assertGreater(calls, 2)
-        self.assertEqual(sorted({int(n) for n in re.findall(r"=== Page (\d+) ===", joined)}), list(range(4, 18)))
         store = PaperStore.open(self.workspace / "papers" / paper, run_dir=self.run_dir)
-        reference_lines = {
-            line
-            for entry in store.paragraphs(4, 17)
-            if entry["kind"] == "reference"
-            for line in range(entry["first_line"], entry["last_line"] + 1)
-        }
-        self.assertTrue(reference_lines)
-        for page in store.pages(4, 17):
-            for line in store.lines(page["page"], ("body",)):
-                if line["id"] in reference_lines:
-                    self.assertNotIn(line["text"], joined)
-                else:
-                    self.assertIn(line["text"], joined)
-        self.assertIn(reading.REFERENCES_OMITTED, joined)
-        again = server.read_pages()
-        self.assertTrue(again.startswith("Pages 4-17 were already returned."), again)
-        self.assertTrue(server.read_pages(first_page=10, last_page=17).startswith("Pages 10-17 were already"))
-        everything = server.read_pages(first_page=16, last_page=17, part="all")
-        self.assertNotIn(reading.REFERENCES_OMITTED, everything)
-        self.assertIn("[1]", everything)
-        with self.assertRaisesRegex(ToolError, r"outside this PDF \(17 pages; manuscript = pages 4-17\)"):
+        expected = {p["page"]: p["text"] for p in store.pages()}
+        actual, cursor = {}, None
+        with mock.patch.object(reading, "READ_BUDGET", 1500):
+            initial = server.read_pages()
+            for _ in range(1000):
+                reply = server.read_pages(cursor=cursor)
+                self.assertEqual(reply["document_id"], store.meta()["fingerprint"])
+                for fragment in reply["fragments"]:
+                    number = fragment["page"]
+                    actual[number] = actual.get(number, "") + fragment["text"]
+                cursor = reply["next_cursor"]
+                if cursor is None:
+                    break
+            else:
+                self.fail("page traversal did not terminate")
+            self.assertEqual(server.read_pages(), initial)
+            server.get_paper_overview()
+            self.assertEqual(server.read_pages(), initial)
+        self.assertEqual(actual, expected)
+        self.assertIn("[1]", actual[16] + actual[17])
+        with self.assertRaisesRegex(ToolError, "outside this PDF"):
             server.read_pages(first_page=40)
-        server.get_paper_overview()  # a new reading session may read everything again
-        self.assertTrue(server.read_pages().startswith("Pages 4-"))
+        with self.assertRaisesRegex(ToolError, "Invalid cursor"):
+            server.read_pages(cursor="p4@20")
+        self.assertIsNone(store.get_state("pages_returned"))
 
     def test_sections_and_search(self):
         self.bind_paper("ieee_single")
-        section = server.read_section("ii. related work")
-        status, _, text = section.partition("\n\n")
-        self.assertTrue(status.startswith("Section II RELATED WORK (level 1, pages "), status)
-        self.assertTrue(text)
-        with self.assertRaisesRegex(ToolError, "INTRODUCTION"):
-            server.read_section("Discussion of results")
+        section_id = next(s["id"] for s in server.get_paper_overview()["outline"] if s["title"] == "RELATED WORK")
+        section = server.read_section(section_id)
+        self.assertEqual(section["section"]["title"], "RELATED WORK")
+        self.assertTrue(section["fragments"])
+        with self.assertRaisesRegex(ToolError, "Unknown section_id.*get_paper_overview"):
+            server.read_section(9999)
+        with mock.patch.object(reading, "READ_BUDGET", 31):
+            cursor = server.read_section(section_id)["next_cursor"]
+            with self.assertRaisesRegex(ToolError, "conflicts"):
+                server.read_section(section_id + 1, cursor)
+            with self.assertRaisesRegex(ToolError, "operation"):
+                server.read_pages(cursor=cursor)
         hits = server.search_paper("Fig")
         self.assertGreaterEqual(hits["total_hits"], 3)
         self.assertTrue(all(4 <= hit["page"] <= 17 for hit in hits["hits"]))
+
+    def test_search_protocol_pagination_and_errors(self):
+        self.bind_paper("ieee_single")
+        result = run(lambda client: client.call_tool("search_paper", {"query": "the"}))
+        reply = json.loads(result.content[0].text)
+        self.assertGreater(reply["total_hits"], len(reply["hits"]))
+        cursor = reply["next_cursor"]
+        self.assertTrue(cursor)
+        self.assertEqual(server.search_paper("the", cursor=cursor), server.search_paper("the", cursor=cursor))
+        with self.assertRaisesRegex(ToolError, "query conflicts"):
+            server.search_paper("different", cursor=cursor)
+        with self.assertRaisesRegex(ToolError, "last_page conflicts"):
+            server.search_paper("the", last_page=2, cursor=cursor)
+        with self.assertRaisesRegex(ToolError, "query"):
+            server.search_paper(" ")
+        with self.assertRaisesRegex(ToolError, "outside this PDF"):
+            server.search_paper("the", first_page=99)
 
 
 class TestAssets(ServerCase):

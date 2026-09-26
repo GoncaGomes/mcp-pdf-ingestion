@@ -18,7 +18,6 @@ from reviewer_mcp.store import PaperStore
 TITLE_BUDGET = 300
 IMAGES_KEY = "images_sent"
 ASSETS_KEY = "assets_returned"  # item ids get_asset returned in full during the current review
-PAGES_READ_KEY = "pages_returned"  # pages read_pages returned whole during the current review
 
 
 class ReviewError(ValueError):
@@ -83,8 +82,7 @@ def overview(store: PaperStore, pdf: Path) -> dict[str, Any]:
     unreadable = [p["page"] for p in store.pages() if p["source"] == "none"]
     if unreadable:
         reply["warnings"] = [f"pages {unreadable} have no text layer (e.g. scanned images); their text cannot be read"]
-    # a new reading session starts with the full image and item budgets and may read every page again
+    # Overview still resets the image and item budgets until MCP-06.
     store.set_state(IMAGES_KEY, "0")
     store.set_state(ASSETS_KEY, "")
-    store.set_state(PAGES_READ_KEY, "")
     return reply

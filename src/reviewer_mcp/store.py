@@ -373,25 +373,6 @@ class PaperStore:
         rows = self._query("SELECT * FROM pages WHERE page BETWEEN ? AND ? ORDER BY page", (first, last))
         return [dict(row) for row in rows]
 
-    def reading_pages(self, first: int, last: int, omission: str = "") -> list[dict[str, Any]]:
-        """Pages first..last; with an omission line, the entries of the reference list are left out of the text and
-        replaced by that line once per page."""
-        pages = self.pages(first, last)
-        sql = "SELECT first_line, last_line FROM paragraphs WHERE kind = 'reference' AND last_page >= ? AND page <= ?"
-        spans = [(row["first_line"], row["last_line"]) for row in self._query(sql, (first, last))] if omission else []
-        if not spans:
-            return pages
-        for page in pages:
-            kept: list[str] = []
-            for line in self.lines(page["page"], ("body",)):
-                if not any(low <= line["id"] <= high for low, high in spans):
-                    kept.append(line["text"])
-                elif omission not in kept:
-                    kept.append(omission)
-            if omission in kept:
-                page["text"] = "\n".join(kept)
-        return pages
-
     def lines(self, page: int, regions: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
         if regions:
             marks = ",".join("?" for _ in regions)
@@ -425,10 +406,19 @@ class PaperStore:
             sql, params = "SELECT * FROM paragraphs WHERE id >= ? ORDER BY id", (start,)
         return [dict(row) for row in self._query(sql, params)]
 
+    def paragraph_lines(self, paragraph_id: int) -> list[dict[str, Any]]:
+        """Body lines in the paragraph's stored span, in extraction order, retaining their PDF pages."""
+        rows = self._query(
+            "SELECT l.id, l.page, l.text FROM lines l JOIN paragraphs p "
+            "ON l.id BETWEEN p.first_line AND p.last_line "
+            "WHERE p.id = ? AND l.region = 'body' ORDER BY l.id", (paragraph_id,)
+        )
+        return [dict(row) for row in rows]
+
     def search(
-        self, query: str, limit: int = 15, first: int = 1, last: int | None = None
+        self, query: str, limit: int = 15, first: int = 1, last: int | None = None, offset: int = 0
     ) -> tuple[int, list[dict[str, Any]]]:
-        """Case-insensitive search over paragraphs, in document order: (total hits, first hits).
+        """Case-insensitive search over paragraphs, in stable ID order: (total hits, requested slice).
 
         The query is matched as a phrase whose last word is a prefix, like grep on words: 'Fig' finds
         'Figure', 'Table I' finds 'Table I' and 'Table II'.
@@ -445,8 +435,8 @@ class PaperStore:
         total = self._query(f"SELECT COUNT(*) {joined}", (phrase, first, last))[0][0]
         rows = self._query(
             "SELECT p.id, p.page, p.kind, p.section, COALESCE(s.title, '') AS section_title, "
-            f"snippet(paragraph_search, 0, '[', ']', '…', 16) AS snippet {joined} ORDER BY p.id LIMIT ?",
-            (phrase, first, last, limit),
+            f"snippet(paragraph_search, 0, '[', ']', '…', 16) AS snippet {joined} ORDER BY p.id LIMIT ? OFFSET ?",
+            (phrase, first, last, limit, offset),
         )
         return int(total), [dict(row) for row in rows]
 

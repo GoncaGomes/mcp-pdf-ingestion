@@ -165,6 +165,16 @@ committed; never rewrite Git history to enforce a one-commit convention.
 
 ### Implementation block format
 
+Execution batch authorized 2026-09-26: implement MCP-03, MCP-04 and MCP-05
+sequentially without intermediate owner approval, provided focused reader/store/
+server tests and relevant static checks pass for each task. Update TODO/HISTORY
+after each task. Run the full unittest suite, `ruff check .`, `basedpyright`,
+`vulture` and `git diff --check` once after MCP-05. Keep tasks `review_pending`
+pending owner acceptance. Stop after MCP-05; no Git mutations or MCP-06 work.
+External Agents SDK integration is deferred; no consumer inspection or endpoint
+probes are part of this batch. This overrides the single-block stopping rule only
+for these three assigned tasks and preserves all acceptance criteria below.
+
 Before assignment, describe a block with: observable goal; prerequisite; exact
 starting files/functions; 3-6 implementation steps; focused checks; exclusions;
 and stop condition. Specify observable results and architectural decisions, while
@@ -316,7 +326,8 @@ extracted text exactly (apart from response metadata), with no pages beyond last
 **Stop:** all requested page text is recoverable and rereadable.
 
 **Integration checkpoint:** the owner can now test overview/read_pages through the
-external Agents SDK client. The coding agent reports readiness and does not edit that project.
+external Agents SDK client. This probe is deferred for the authorized MCP-03–05 batch.
+The coding agent reports readiness and does not inspect or edit that project.
 Continue later tasks only when assigned; do not invent a successful SDK probe.
 
 **Suggested owner commit after acceptance:**
@@ -354,6 +365,10 @@ Return total matches, page, section ID/title where available, and contextual sni
 **Verify:** more hits than one result page; zero hits; query containing quotes;
 range filtering; cursor replay and mismatched query; no duplicates or missing hits.
 **Stop:** all matching occurrences can be traversed. No new search library.
+
+Implementation note (2026-09-26): `SEARCH_PAGE_SIZE = 15` matching paragraph records;
+unique paragraph ID is the stable ordering key. Filters retain the existing paragraph
+start-page semantics; totals count records, not repeated terms within one paragraph.
 
 **Suggested owner commit after acceptance:**
 `feat(search): add stable pagination and page filters`

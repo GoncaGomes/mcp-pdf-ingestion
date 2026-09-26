@@ -39,9 +39,9 @@ Read one PDF submission as evidence. The server is bound to one configured PDF; 
 files, caches and extraction are handled internally.
 - get_paper_overview: title, page count, full-PDF outline with section ids, numbered-item counts and extraction
   warnings. Call it first.
-- read_pages: whole pages in reading order; continue with the next cursor until it is none.
-- read_section: one outline section by its heading.
-- search_paper: pages and snippets where a term is mentioned.
+- read_pages: repeatable page-labelled text; continue with next_cursor until null.
+- read_section: an outline section by ID, with complete continuation and page provenance.
+- search_paper: paginated textual matches with pages, section IDs and snippets.
 - list_assets, get_asset: numbered figures, tables, equations, algorithms and references, with content as text and
   citing sentences; get_asset attaches a cropped image when requested and images are enabled.
 """
@@ -56,10 +56,6 @@ mcp = FastMCP("reviewer", instructions=INSTRUCTIONS)
 # The document bound to this process: set once at startup (main) or once per in-process test; never reread.
 _DOCUMENT: DocumentConfig | None = None
 
-Part = Annotated[
-    Literal["manuscript", "responses", "cover", "all"],
-    Field(description="Pages to use: a detected part (manuscript, responses or cover) or all."),
-]
 AssetKind = Literal["figure", "table", "equation", "algorithm", "listing", "statement", "reference"]
 
 
@@ -104,84 +100,52 @@ def get_paper_overview() -> dict[str, Any]:
     return overview(store, pdf)
 
 
-@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False})
+@mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
 @_agent_errors
 def read_pages(
-    first_page: Annotated[int | None, Field(ge=1, description="First PDF page; omit for the part's start.")] = None,
-    last_page: Annotated[int | None, Field(ge=1, description="Last PDF page; omit for the part's end.")] = None,
-    part: Part = "manuscript",
+    first_page: Annotated[int | None, Field(ge=1, description="First PDF page; alone selects one page.")] = None,
+    last_page: Annotated[int | None, Field(ge=1, description="Last PDF page; alone starts at page 1.")] = None,
     cursor: Annotated[
-        str | None, Field(max_length=20, description="next cursor of the previous reply; overrides the pages.")
+        str | None, Field(max_length=reading.CURSOR_LIMIT, description="Opaque next_cursor; pass unchanged.")
     ] = None,
-) -> str:
-    """Read whole pages in reading order (about 12,000 characters per call); with part='manuscript' the reference list
-    entries are left out (list_assets(kind='reference') lists them). The first line gives the pages returned and the
-    next cursor: pass it as cursor until it is none. Pages already returned since the last get_paper_overview are not
-    sent again."""
+) -> dict[str, Any]:
+    """Read page-labelled text, including references (12,000 characters per call). Omit bounds for the whole PDF.
+    Reads are repeatable. Continue with next_cursor until null; explicit bounds must agree with its original range."""
     _, store = _open()
-    part_first, part_last = part_range(store, part)
-    scope = f"{part} = pages {page_span(part_first, part_last)}"
-    offset = 0
-    if cursor:
-        first, offset = reading.parse_cursor(cursor)
-        last = max(part_last, first)
-    else:
-        first = first_page or part_first
-        last = last_page or (part_last if first <= part_last else first)
-    last = min(last, store.page_count)
-    omission = reading.REFERENCES_OMITTED if part == "manuscript" else ""
-    if offset == 0 and 1 <= first <= last:
-        returned = reading.pages_returned(store, bool(omission))
-        unread = next((page for page in range(first, last + 1) if page not in returned), None)
-        if unread is None:
-            return (
-                f"Pages {page_span(first, last)} were already returned. Use search_paper or "
-                "read_section to check a detail and get_asset for a numbered item."
-            )
-        first = unread
-    text, pages = reading.read_pages(store, first, last, offset, scope, omission)
-    reading.record_returned(store, pages, bool(omission))
-    return text
+    return reading.read_pages(store, first_page, last_page, cursor)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
 @_agent_errors
 def read_section(
-    heading: Annotated[
-        str,
-        Field(
-            min_length=1,
-            max_length=120,
-            description="Outline heading, e.g. 'Introduction', 'IV. Experiments', '3.2'; case and numbering ignored.",
-        ),
-    ],
-) -> str:
-    """Read one outline section by its heading, up to the next heading of the same or higher level. If nothing
-    matches, the error lists the headings."""
+    section_id: Annotated[int, Field(ge=1, description="Section ID from get_paper_overview's outline.")],
+    cursor: Annotated[
+        str | None, Field(max_length=reading.CURSOR_LIMIT, description="Opaque next_cursor; pass unchanged.")
+    ] = None,
+) -> dict[str, Any]:
+    """Read a section by ID, including subsections until the next equal/higher heading. Returns page-labelled
+    fragments, section identity and next_cursor. Repeat the same section_id when continuing until null."""
     _, store = _open()
-    first, last = part_range(store, "manuscript")
-    return reading.read_section(store, heading, first, last)
+    return reading.read_section(store, section_id, cursor)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
 @_agent_errors
 def search_paper(
     query: Annotated[
-        str,
-        Field(
-            min_length=2,
-            max_length=120,
-            description="Words matched from their start, case-insensitive: a term, dataset, 'Table 3', a number.",
-        ),
+        str, Field(min_length=1, max_length=120, description="Case-insensitive FTS phrase; the final word is a prefix.")
     ],
-    part: Part = "manuscript",
-    max_hits: Annotated[int, Field(ge=1, le=40, description="Maximum hits returned.")] = 15,
+    first_page: Annotated[int | None, Field(ge=1, description="First PDF page; alone selects one page.")] = None,
+    last_page: Annotated[int | None, Field(ge=1, description="Last PDF page; alone starts at page 1.")] = None,
+    cursor: Annotated[
+        str | None, Field(max_length=reading.CURSOR_LIMIT, description="Opaque next_cursor; repeat the original query.")
+    ] = None,
 ) -> dict[str, Any]:
-    """Find where something is mentioned: the number of matching paragraphs and, per hit, PDF page, section and
-    snippet."""
+    """Search all PDF text by default. Returns total matching paragraphs and up to 15 ordered snippets with page
+    and section identity. Range filters use paragraph start pages. Continue with next_cursor until null;
+    zero matches do not establish absence from the paper."""
     _, store = _open()
-    first, last = part_range(store, part)
-    return reading.search(store, query, first, last, max_hits)
+    return reading.search(store, query, first_page, last_page, cursor)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})

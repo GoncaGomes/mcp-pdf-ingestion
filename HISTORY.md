@@ -302,3 +302,64 @@ Next: owner review or concrete blocked step.
 Do not invent commit IDs, approval, test counts or scientific conclusions. Mark
 external results as owner-reported when they were not directly observed. Keep
 credentials, raw model payloads and lengthy logs out of this document.
+
+## 2026-09-26 — MCP-03 — Repeatable, complete page reads
+
+Status: `review_pending`. Page reads now return document identity, exact page-labelled
+fragments and an opaque JSON/base64 cursor preserving the original range and position.
+Invalid ranges/cursors are errors. Removed page consumption and reference omission;
+empty pages retain stored source metadata. Asset/image behavior is unchanged.
+
+Focused checks (venv): `python -m unittest discover -s tests -p test_reading.py -q`
+6 OK; `test_server.py` 12 OK; `test_indexes.py` 6 run, 1 corpus skip;
+`test_document_binding.py` 6 OK after replacing an obsolete string-output assertion
+caught by its first run. Targeted `ruff check` clean, `basedpyright` 0/0/0,
+`git diff --check` clean. Full batch checks follow MCP-05. No external SDK probe.
+Next: authorized MCP-04; owner review remains pending.
+
+## 2026-09-26 — MCP-04 — Complete sections by ID
+
+Status: `review_pending`. Replaced public heading matching with overview section IDs.
+Section reads retain existing boundaries/subsections, paginate oversized paragraphs,
+and use stored lines plus the existing join rule for cross-page text provenance,
+including dehyphenation. Paragraphs are separated by two newlines; continuation is
+exact. Unknown IDs and incompatible cursors produce actionable errors.
+
+Focused checks (venv): `python -m unittest discover -s tests -p test_reading.py -q`
+11 OK; `test_server.py` 12 OK; `test_indexes.py` 6 run, 1 corpus skip. The first
+server run caught a generic wrong-operation error message; reordered validation
+and reran reader/server tests successfully. Targeted `ruff check` clean,
+`basedpyright` 0/0/0, `git diff --check` clean. Existing venv: CPython 3.14.3;
+no interpreter/dependency changes. Full batch checks follow MCP-05.
+Next: authorized MCP-05; owner review remains pending.
+
+## 2026-09-26 — MCP-05 — Paginated textual search
+
+Status: `review_pending` (batch implementation and validation complete).
+Search now returns 15 matching paragraph records per response, total count, stable
+paragraph IDs, source page and section ID/title, with query/range/offset cursors.
+Existing parameterized SQLite FTS phrase matching with a final-word prefix is
+unchanged. Page filters use paragraph start pages. Zero matches make no absence claim.
+
+Focused checks (venv): `python -m unittest discover -s tests -p test_reading.py -q`
+15 OK; `test_server.py` 13 OK; `test_indexes.py` 7 run, 1 corpus skip. A test's
+assumption of >30 matches was corrected to require >15 (the fixture has 20; traversal
+also uses two-result pages for range checks). Targeted `ruff check` clean and
+`basedpyright` 0/0/0.
+
+Final batch checks for MCP-03/MCP-04/MCP-05, run once after MCP-05:
+- `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py" -q`:
+  89 run, 83 passed, 1 failure, 5 skipped. The only failure is the recorded Windows
+  chmod assertion in `test_store_location_permissions_and_cache` (511 != 448).
+  All skips are corpus tests requiring `REVIEWER_WORKSPACE`. Full local log:
+  `tmp/mcp-03-05-unittest.log` (ignored); no new failures remain.
+- `.venv/Scripts/ruff.exe check .`: clean; `.venv/Scripts/basedpyright.exe`:
+  0 errors/warnings/notes; `.venv/Scripts/vulture.exe`: clean;
+  `git diff --check`: no whitespace errors (LF/CRLF notices only).
+
+Existing virtual environment is CPython 3.14.3, reused without changes. Text access
+is ready for owner review; asset quotas/rendering/vision remain outside this batch.
+MCP-01 status text now agrees with its pre-existing `done` table entry; MCP-02
+remains `review_pending` without invented acceptance. No external SDK integration,
+endpoint calls, scientific validation or Git mutations occurred. Stop after MCP-05;
+owner acceptance is the next step.

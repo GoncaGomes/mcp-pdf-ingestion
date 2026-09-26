@@ -82,8 +82,8 @@ async def _serve(pdf: Path, run_dir: Path) -> tuple[dict, str]:
     )
     async with Client(transport) as client:
         overview = json.loads((await client.call_tool("get_paper_overview", {})).content[0].text)
-        # Explicit page range and part='all': no manuscript heuristics in this isolation check.
-        pages = (await client.call_tool("read_pages", {"first_page": 1, "last_page": 2, "part": "all"})).content[
+        # Explicit physical page range: no manuscript heuristics in this isolation check.
+        pages = (await client.call_tool("read_pages", {"first_page": 1, "last_page": 2})).content[
             0
         ].text
     return overview, pages
@@ -110,11 +110,15 @@ class ProcessIsolationTestCase(IsolatedTestCase):
         self.assertEqual(overview_b["pdf_pages"], 2)
 
         # Each read_pages returns exactly the text of its own PDF, for the explicitly requested pages.
-        self.assertTrue(pages_a.startswith("Pages 1-2"))
+        reply_a, reply_b = json.loads(pages_a), json.loads(pages_b)
+        self.assertEqual(reply_a["document_id"], sha_a)
+        self.assertEqual(reply_b["document_id"], sha_b)
+        for reply in (reply_a, reply_b):
+            self.assertEqual([f["page"] for f in reply["fragments"]], [1, 2])
+            self.assertIsNone(reply["next_cursor"])
         self.assertIn("ZULU-ALPHA page 1", pages_a)
         self.assertIn("ZULU-ALPHA page 2", pages_a)
         self.assertNotIn("ZULU-BRAVO", pages_a)
-        self.assertTrue(pages_b.startswith("Pages 1-2"))
         self.assertIn("ZULU-BRAVO page 1", pages_b)
         self.assertIn("ZULU-BRAVO page 2", pages_b)
         self.assertNotIn("ZULU-ALPHA", pages_b)
