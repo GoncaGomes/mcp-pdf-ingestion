@@ -77,7 +77,8 @@ class TestStructure(IsolatedTestCase):
         store = PaperStore.open(build_fixture("scholarone_two_copies", self.tmp_path))
         self.assertEqual([a["page"] for a in store.assets("figure", 4, 23)], [5, 9, 10])
         self.assertEqual([a["page"] for a in store.assets("figure", 24, 43)], [25, 29, 30])
-        second = store.asset("figure:1", 24, 43)
+        entry = next(a for a in store.assets("figure", 24, 43) if a["id"] == "figure:1")
+        second = store.asset(entry["segment"], entry["id"])
         assert second is not None
         self.assertEqual(second["page"], 25)
         self.assertTrue(all(24 <= m["page"] <= 43 for m in second["mentions"]))

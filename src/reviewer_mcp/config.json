@@ -86,22 +86,10 @@
       "value": false,
       "description": "Attach a cropped image of a numbered item when get_asset asks for one. Off while Goose drops images for custom providers (aaif-goose/goose#11998); turn on once the agent receives them."
     },
-    "budget": {
-      "value": 4,
-      "unit": "images per paper",
-      "description": "Most images attached during one review of a paper; a new get_paper_overview restores the budget."
-    },
     "max_side": {
       "value": 1280,
       "unit": "pixels",
       "description": "Longest side of an attached image."
-    }
-  },
-  "replies": {
-    "asset_budget": {
-      "value": 6,
-      "unit": "numbered items per paper",
-      "description": "Most items get_asset returns in full during one review of a paper; asking again for an item already returned, or for more items, gets a one-line reply. A new get_paper_overview restores the budget."
     }
   }
 }

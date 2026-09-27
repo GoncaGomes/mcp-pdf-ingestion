@@ -12,9 +12,9 @@ from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
 from fastmcp.exceptions import ToolError
 from pdf_fixtures import IsolatedTestCase, build_fixture, write_workspace
+from test_reading import changed_cursor
 
 from reviewer_mcp import reading, server
-from reviewer_mcp.papers import ASSETS_KEY
 from reviewer_mcp.store import PaperStore, close_all
 
 TOOLS = {
@@ -58,6 +58,21 @@ class ServerCase(IsolatedTestCase):
         server.bind_document()
         return paper
 
+    def catalog(self, **kwargs):
+        reply = server.list_assets(**kwargs)
+        counts, total, items = reply["counts"], reply["total_assets"], []
+        for _ in range(1000):
+            self.assertEqual(reply["counts"], counts)
+            self.assertEqual(reply["total_assets"], total)
+            self.assertNotIn("uncited", reply)
+            self.assertLessEqual(len(reply["items"]), server.ASSET_PAGE_SIZE)
+            items.extend(reply["items"])
+            if reply["next_cursor"] is None:
+                self.assertEqual(len(items), total)
+                return items
+            reply = server.list_assets(cursor=reply["next_cursor"])
+        self.fail("catalog traversal did not terminate")
+
 
 class TestContract(ServerCase):
     def test_tools_parameters_and_description_budget(self):
@@ -67,9 +82,12 @@ class TestContract(ServerCase):
             ("read_pages", {"first_page", "last_page", "cursor"}),
             ("read_section", {"section_id", "cursor"}),
             ("search_paper", {"query", "first_page", "last_page", "cursor"}),
+            ("list_assets", {"kind", "first_page", "last_page", "cursor"}),
         ):
             self.assertEqual(set(tools[name].input_schema["properties"]), parameters)
             self.assertGreaterEqual(tools[name].input_schema["properties"]["cursor"]["anyOf"][0]["maxLength"], 4096)
+        self.assertEqual(set(tools["get_asset"].input_schema["properties"]), {"asset_id", "include_image"})
+        self.assertNotIn("page", json.dumps(tools["list_assets"].input_schema["properties"]["kind"]))
         for tool in tools.values():
             self.assertTrue(tool.description, tool.name)
             self.assertNotIn("paper", tool.input_schema["properties"], tool.name)
@@ -77,14 +95,15 @@ class TestContract(ServerCase):
                 self.assertTrue(schema.get("description"), f"{tool.name}.{name} has no description")
         listed = [{"name": t.name, "description": t.description, "parameters": t.input_schema} for t in tools.values()]
         self.assertLessEqual(len(json.dumps(listed, ensure_ascii=False)), SCHEMA_BUDGET)
-        # Asset consumption and overview resets remain until MCP-06.
+
+        # All six tools are now repeatable reads; no consumption ledger is mutated.
         def hints(name):
             a = tools[name].annotations
             return (a.read_only_hint, bool(a.destructive_hint), a.idempotent_hint)
 
-        self.assertEqual(hints("get_paper_overview"), (False, True, True))
+        self.assertEqual(hints("get_paper_overview"), (True, False, True))
         self.assertEqual(hints("read_pages"), (True, False, True))
-        self.assertEqual(hints("get_asset"), (False, False, False))
+        self.assertEqual(hints("get_asset"), (True, False, True))
         # only the pure reads claim read-only
         for name in ("read_section", "search_paper", "list_assets"):
             self.assertEqual(hints(name), (True, False, True), name)
@@ -255,67 +274,227 @@ class TestReading(ServerCase):
 
 
 class TestAssets(ServerCase):
+    def asset_id(self, stored_id):
+        _, store = server._open()
+        matches = [a for a in store.assets() if a["id"] == stored_id]
+        self.assertEqual(len(matches), 1)
+        return f"segment:{matches[0]['segment']}/{stored_id}"
+
     def test_list_and_inspect_items(self):
         self.bind_paper("ieee_single")
         listing = server.list_assets()
         self.assertEqual(listing["counts"]["figure"], 3)
-        self.assertIn("figure:3", listing["uncited"])
-        self.assertTrue(all(item["id"].split(":")[0] != "reference" for item in listing["items"]))
-        table = run(lambda client: client.call_tool("get_asset", {"asset": "table:I"}))
+        self.assertTrue(any(i["kind"] == "reference" for i in listing["items"]))
+        table_id = self.asset_id("table:I")
+        table = run(lambda client: client.call_tool("get_asset", {"asset_id": table_id}))
         detail = json.loads(table.content[0].text)
+        self.assertEqual(detail["id"], table_id)
+        self.assertEqual(detail["document_id"], listing["document_id"])
         self.assertTrue(detail["content"].startswith("|"))
         self.assertTrue(detail["cited_by"])
-        self.assertEqual(detail["image"], "not requested")
-        with self.assertRaisesRegex(ToolError, "list_assets"):
-            server.get_asset("figure:99")
+        self.assertEqual(detail["image_status"], "not_requested")
+        self.assertEqual((detail["first_page"], detail["last_page"]), (7, 7))
+        self.assertEqual(detail["method"], "caption+table")
+        self.assertEqual(detail["confidence"], "high")
+        for item in self.catalog():
+            found = json.loads(server.get_asset(item["id"])[0].text)
+            self.assertEqual(found["id"], item["id"])
+            self.assertEqual(found["label"], item["label"])
 
-    def test_items_are_returned_once_within_the_budget(self):
+    def test_invalid_short_and_unknown_ids(self):
         self.bind_paper("ieee_single")
-        server.get_paper_overview()
-        override = self.tmp_path / "two_items.json"
-        override.write_text(json.dumps({"replies": {"asset_budget": 2}}), encoding="utf-8")
+        for asset_id in (
+            "figure:1",
+            "page:1",
+            "segment:02/figure:1",
+            "segment:-1/figure:1",
+            "segment:2/figure:",
+            "segment:2/figure:1/extra",
+            "segment:2/figure:1'",
+            "",
+        ):
+            with self.subTest(asset_id=asset_id), self.assertRaisesRegex(ToolError, "Invalid asset_id.*list_assets"):
+                server.get_asset(asset_id)
+        for asset_id in ("segment:999/figure:1", "segment:2/figure:999"):
+            with self.assertRaisesRegex(ToolError, "Unknown asset_id.*list_assets"):
+                server.get_asset(asset_id)
 
-        def reply(asset):
-            return server.get_asset(asset)[0].text
-
-        with mock.patch.dict(os.environ, {"REVIEWER_CONFIG": str(override)}):
-            self.assertEqual(json.loads(reply("figure:1"))["id"], "figure:1")
-            self.assertEqual(reply("figure:1"), "figure:1 was already returned.")
-            self.assertEqual(json.loads(reply("table:I"))["id"], "table:I")
-            self.assertIn("The budget of 2 items is used (figure:1, table:I)", reply("figure:2"))
-            server.get_paper_overview()  # a new reading session restores the budget
-            self.assertEqual(json.loads(reply("figure:2"))["id"], "figure:2")
-
-    def test_budget_holds_for_parallel_calls(self):
-        paper = self.bind_paper("ieee_single")
-        server.get_paper_overview()
-        override = self.tmp_path / "two_items.json"
-        override.write_text(json.dumps({"replies": {"asset_budget": 2}}), encoding="utf-8")
-        ids = ["figure:1", "figure:2", "figure:3", "table:I"] * 3
-        with mock.patch.dict(os.environ, {"REVIEWER_CONFIG": str(override)}), ThreadPoolExecutor(len(ids)) as pool:
-            replies = list(pool.map(lambda asset: server.get_asset(asset)[0].text, ids))
-        self.assertEqual(sum(reply.startswith("{") for reply in replies), 2)
-        stored = PaperStore.open(self.workspace / "papers" / paper, run_dir=self.run_dir).get_state(ASSETS_KEY) or ""
-        self.assertEqual(len(stored.split(",")), 2)
-
-    def test_images_follow_vision_mode_and_budget(self):
+    def test_repeatability_stale_state_and_more_than_six_assets(self):
         self.bind_paper("ieee_single")
+        _, store = server._open()
+        stale = {
+            "assets_returned": "figure:1,table:I,figure:2,figure:3,equation:1,equation:2",
+            "images_sent": "999",
+            "pages_returned": "legacy",
+        }
+        for key, value in stale.items():
+            store.set_state(key, value)
+        ids = [i["id"] for i in self.catalog()]
+        self.assertGreater(len(ids), 6)
+        with ThreadPoolExecutor(4) as pool:
+            replies = list(pool.map(lambda asset_id: server.get_asset(asset_id)[0].text, ids * 2))
+        self.assertEqual(replies[: len(ids)], replies[len(ids) :])
+        self.assertTrue(all("content" in json.loads(reply) for reply in replies))
         server.get_paper_overview()
+        self.assertEqual({k: store.get_state(k) for k in stale}, stale)
 
-        def figure(client):
-            return client.call_tool("get_asset", {"asset": "figure:1", "include_image": True})
-
-        disabled = run(figure)  # images are off in the packaged config
-        self.assertEqual([type(c).__name__ for c in disabled.content], ["TextContent"])
-        self.assertIn("images are disabled", json.loads(disabled.content[0].text)["image"])
+    def test_images_enabled_repeatable_and_never_rendered_without_request(self):
+        self.bind_paper("ieee_single")
+        asset_id = self.asset_id("figure:1")
+        _, store = server._open()
+        store.set_state("images_sent", "999")
+        self.assertEqual(set(server.crops.settings()), {"enabled", "max_side"})
+        disabled = server.get_asset(asset_id, include_image=True)
+        self.assertEqual(json.loads(disabled[0].text)["image_status"], "disabled")
         override = self.tmp_path / "images_on.json"
         override.write_text(json.dumps({"images": {"enabled": True}}), encoding="utf-8")
         with mock.patch.dict(os.environ, {"REVIEWER_CONFIG": str(override)}):
-            kinds = [[type(c).__name__ for c in run(figure).content] for _ in range(5)]
-            self.assertEqual(kinds[0], ["TextContent", "ImageContent"])
-            self.assertEqual(kinds[4], ["TextContent"])
-            server.get_paper_overview()  # a new reading session restores the budget
-            self.assertEqual([type(c).__name__ for c in run(figure).content], ["TextContent", "ImageContent"])
+            with mock.patch.object(server.crops, "crop_png") as crop:
+                detail = json.loads(server.get_asset(asset_id)[0].text)
+                self.assertEqual(detail["image_status"], "not_requested")
+                self.assertTrue(detail["region_available"])
+                crop.assert_not_called()
+            for _ in range(6):
+                result = run(
+                    lambda client: client.call_tool("get_asset", {"asset_id": asset_id, "include_image": True})
+                )
+                self.assertEqual([type(c).__name__ for c in result.content], ["TextContent", "ImageContent"])
+                self.assertEqual(json.loads(result.content[0].text)["image_status"], "attached")
+            self.assertEqual(store.get_state("images_sent"), "999")
+            with store.con:
+                store.con.execute("UPDATE assets SET x0 = NULL WHERE id = ?", ("figure:1",))
+            with mock.patch.object(server.crops, "crop_png") as crop:
+                missing = json.loads(server.get_asset(asset_id, include_image=True)[0].text)
+                self.assertFalse(missing["region_available"])
+                self.assertEqual(missing["image_status"], "missing_region")
+                crop.assert_not_called()
+
+    def test_duplicate_ids_resolve_exact_segment_and_mentions(self):
+        self.bind_paper("scholarone_two_copies")
+        _, store = server._open()
+        copies = [a for a in store.assets("figure") if a["id"] == "figure:1"]
+        self.assertEqual(len(copies), 2)
+        self.assertNotEqual(copies[0]["segment"], copies[1]["segment"])
+        for index, item in enumerate(copies):
+            marker = f"Unique copy {index}"
+            with store.con:
+                store.con.execute(
+                    "UPDATE assets SET content = ? WHERE segment = ? AND id = ?", (marker, item["segment"], item["id"])
+                )
+                store.con.execute(
+                    "UPDATE paragraphs SET text = ? WHERE id IN "
+                    "(SELECT paragraph FROM mentions WHERE segment = ? AND asset = ?)",
+                    (marker + " cites Fig. 1.", item["segment"], item["id"]),
+                )
+        store.set_manuscript_pages(24, 43, "Only the second copy is the inferred manuscript")
+        for index, item in enumerate(copies):
+            canonical = f"segment:{item['segment']}/{item['id']}"
+            detail = json.loads(server.get_asset(canonical)[0].text)
+            self.assertEqual(detail["content"], f"Unique copy {index}")
+            self.assertEqual(detail["first_page"], item["page"])
+            self.assertTrue(detail["cited_by"])
+            self.assertTrue(all(f"Unique copy {index}" in m["text"] for m in detail["cited_by"]))
+            self.assertIn(canonical, [i["id"] for i in self.catalog()])
+        self.assertIsNone(store.asset(999, "figure:1"))
+
+
+class TestCatalog(ServerCase):
+    def test_traversal_tie_breaker_duplicates_and_exact_retrieval(self):
+        self.bind_paper("scholarone_two_copies")
+        _, store = server._open()
+        # Force sequence ties to prove that the segment/ID tie-breaker is sufficient.
+        with store.con:
+            store.con.execute("UPDATE assets SET seq = 1")
+        expected = sorted(store.assets(), key=lambda a: (a["segment"], a["id"]))
+        self.assertGreater(len(expected), server.ASSET_PAGE_SIZE)
+        initial = server.list_assets()
+        actual = self.catalog()
+        ids = [item["id"] for item in actual]
+        self.assertEqual(ids, [f"segment:{a['segment']}/{a['id']}" for a in expected])
+        self.assertEqual(len(set(ids)), len(ids))
+        self.assertEqual(server.list_assets(), initial)
+        self.assertEqual(self.catalog(), actual)
+        for item, source in zip(actual, expected, strict=True):
+            detail = json.loads(server.get_asset(item["id"])[0].text)
+            self.assertEqual(detail["content"], source["content"])
+            self.assertEqual((item["first_page"], item["last_page"]), (source["page"], source["last_page"]))
+            self.assertEqual(item["cited_count"], len(store.asset(source["segment"], source["id"])["mentions"]))
+            self.assertLessEqual(len(item["caption_preview"]), server.CAPTION_PREVIEW)
+            self.assertEqual(item["region_available"], source["x0"] is not None)
+        duplicates = [i for i in actual if i["id"].endswith("/figure:1")]
+        self.assertEqual(len(duplicates), 2)
+        self.assertEqual(duplicates[0]["label"], duplicates[1]["label"])
+        self.assertNotEqual(duplicates[0]["id"], duplicates[1]["id"])
+
+    def test_kind_range_defaults_overlap_and_empty_results(self):
+        self.bind_paper("ieee_single")
+        _, store = server._open()
+        with store.con:
+            store.con.execute("UPDATE assets SET last_page = 9 WHERE id = ?", ("table:I",))
+        all_assets = store.assets()
+        with mock.patch.object(server, "ASSET_PAGE_SIZE", 2):
+            for args, low, high in (
+                ({}, 1, 17),
+                ({"first_page": 8}, 8, 8),
+                ({"last_page": 8}, 1, 8),
+                ({"first_page": 8, "last_page": 10}, 8, 10),
+            ):
+                for kind in (None, "figure", "reference", "table", "statement"):
+                    with self.subTest(args=args, kind=kind):
+                        actual = self.catalog(kind=kind, **args)
+                        expected = [
+                            a
+                            for a in all_assets
+                            if a["page"] <= high and a["last_page"] >= low and (kind is None or a["kind"] == kind)
+                        ]
+                        self.assertEqual(
+                            [i["id"] for i in actual], [f"segment:{a['segment']}/{a['id']}" for a in expected]
+                        )
+                        self.assertEqual(
+                            server.list_assets(kind=kind, **args)["counts"],
+                            {k: sum(a["kind"] == k for a in expected) for k in {a["kind"] for a in expected}},
+                        )
+        overlap = server.list_assets(kind="table", first_page=8)["items"]
+        self.assertEqual([(i["first_page"], i["last_page"]) for i in overlap], [(7, 9)])
+        self.assertEqual(json.loads(server.get_asset(overlap[0]["id"])[0].text)["last_page"], 9)
+        zero = server.list_assets(kind="statement")
+        self.assertEqual((zero["total_assets"], zero["items"], zero["counts"], zero["next_cursor"]), (0, [], {}, None))
+        self.assertTrue(any(i["kind"] == "reference" for i in self.catalog()))
+        for first, last in ((0, 1), (3, 2), (1, 18), (18, None), (None, 0)):
+            with self.assertRaises(ToolError):
+                server.list_assets(first_page=first, last_page=last)
+        with self.assertRaisesRegex(ToolError, "Invalid kind"):
+            server.list_assets(kind="page")
+
+    def test_cursor_replay_and_rejected_conflicts(self):
+        self.bind_paper("ieee_single")
+        with mock.patch.object(server, "ASSET_PAGE_SIZE", 2):
+            cursor = server.list_assets(kind="reference", first_page=15, last_page=17)["next_cursor"]
+            self.assertTrue(cursor)
+            reply = server.list_assets(cursor=cursor)
+            self.assertEqual(reply, server.list_assets(cursor=cursor))
+            self.assertEqual(reply, server.list_assets(kind="reference", first_page=15, last_page=17, cursor=cursor))
+            for kwargs in ({"kind": "figure"}, {"first_page": 16}, {"last_page": 16}):
+                with self.assertRaisesRegex(ToolError, "conflicts"):
+                    server.list_assets(cursor=cursor, **kwargs)
+            for changes in (
+                {"document_id": "other"},
+                {"operation": "read_pages"},
+                {"kind": "page"},
+                {"first": None},
+                {"last": 99},
+                {"offset": -1},
+                {"offset": True},
+                {"offset": "2"},
+                {"offset": 999999},
+            ):
+                with self.subTest(changes=changes), self.assertRaises(ToolError):
+                    server.list_assets(cursor=changed_cursor(cursor, **changes))
+            with self.assertRaisesRegex(ToolError, "operation"):
+                server.read_pages(cursor=cursor)
+        for cursor in ("", "bad cursor", "e30=", "W10=", "a" * 4097):
+            with self.assertRaisesRegex(ToolError, "Invalid cursor"):
+                server.list_assets(cursor=cursor)
 
 
 if __name__ == "__main__":

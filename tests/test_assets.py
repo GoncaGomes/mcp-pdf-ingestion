@@ -14,6 +14,15 @@ def ids(store: PaperStore, kind: str) -> list[str]:
     return [asset["id"] for asset in store.assets(kind)]
 
 
+def exact_asset(store: PaperStore, asset_id: str):
+    """These single-copy extraction fixtures have exactly one segment for each requested ID."""
+    matches = [a for a in store.assets() if a["id"] == asset_id]
+    if not matches:
+        return None
+    assert len(matches) == 1, f"Fixture must select an explicit segment for {asset_id}"
+    return store.asset(matches[0]["segment"], asset_id)
+
+
 def numbered(values: list[str]) -> list[str]:
     return sorted(values, key=lambda value: int(value.split(":")[1]))
 
@@ -35,7 +44,7 @@ class TestAssets(IsolatedTestCase):
         self.assertGreaterEqual(figures["figure:2"]["cited"], 1)
         self.assertEqual(figures["figure:3"]["cited"], 0)
 
-        table = store.asset("table:I")
+        table = exact_asset(store, "table:I")
         self.assertIsNotNone(table)
         assert table is not None
         self.assertEqual((table["page"], table["method"], table["content_format"]), (7, "caption+table", "markdown"))
@@ -43,7 +52,7 @@ class TestAssets(IsolatedTestCase):
         self.assertIn(7, {m["page"] for m in table["mentions"]})
 
         self.assertEqual(ids(store, "equation"), ["equation:1", "equation:2"])
-        equation = store.asset("equation:1")
+        equation = exact_asset(store, "equation:1")
         assert equation is not None
         self.assertEqual(equation["page"], 6)
         self.assertEqual(equation["content_format"], "text+mathml")
@@ -52,7 +61,7 @@ class TestAssets(IsolatedTestCase):
         self.assertIn("<msubsup><mi>x</mi><mi>i</mi><mn>2</mn></msubsup>", markup)
         self.assertIn("Eq. (1)", {m["text"] for m in equation["mentions"]})
 
-        algorithm = store.asset("algorithm:1")
+        algorithm = exact_asset(store, "algorithm:1")
         assert algorithm is not None
         self.assertEqual((algorithm["page"], algorithm["method"]), (8, "caption+rules"))
         self.assertIn("1: R <- X", algorithm["content"])
@@ -60,10 +69,10 @@ class TestAssets(IsolatedTestCase):
         self.assertIn(8, {m["page"] for m in algorithm["mentions"]})
 
         self.assertEqual(numbered(ids(store, "reference")), [f"reference:{k}" for k in range(1, 15)])
-        reference = store.asset("reference:1")
+        reference = exact_asset(store, "reference:1")
         assert reference is not None
         self.assertIn(4, {m["page"] for m in reference["mentions"]})
-        self.assertIsNone(store.asset("figure:99"))
+        self.assertIsNone(exact_asset(store, "figure:99"))
 
     def test_caption_paragraphs_need_small_type(self):
         store = PaperStore.open(build_fixture("ieee_single", self.tmp_path))
@@ -79,7 +88,7 @@ class TestAssets(IsolatedTestCase):
         self.assertEqual(ids(store, "figure"), ["figure:1", "figure:2", "figure:3"])
         self.assertEqual([a["page"] for a in store.assets("figure")], [3, 7, 8])
         self.assertEqual(ids(store, "table"), ["table:1"])
-        table = store.asset("table:1")
+        table = exact_asset(store, "table:1")
         assert table is not None
         self.assertEqual(table["method"], "caption+table")
         self.assertGreaterEqual(len(table["mentions"]), 1)
@@ -96,12 +105,12 @@ class TestAssets(IsolatedTestCase):
         builder.paragraph("Theorems 1 and 2 are illustrated in Figs. 1-3 and discussed in Tables I-III.")
         store = PaperStore.open(builder.save(self.tmp_path / "statements.pdf"))
         self.assertEqual(ids(store, "statement"), ["theorem:1", "lemma:2"])
-        theorem = store.asset("theorem:1")
+        theorem = exact_asset(store, "theorem:1")
         assert theorem is not None
         self.assertEqual(theorem["label"], "Theorem 1 (Bound)")
         self.assertIn("Proof. The claim follows", theorem["content"])
         self.assertEqual(len(theorem["mentions"]), 1)
-        lemma = store.asset("lemma:2")
+        lemma = exact_asset(store, "lemma:2")
         assert lemma is not None
         self.assertNotIn("Proof", lemma["content"])
 
@@ -118,7 +127,7 @@ class TestAssets(IsolatedTestCase):
         )
         builder.paragraph(filler(2, 3))
         store = PaperStore.open(builder.save(self.tmp_path / "booktabs.pdf"))
-        table = store.asset("table:S2")
+        table = exact_asset(store, "table:S2")
         assert table is not None
         self.assertEqual(
             (table["method"], table["confidence"], table["content_format"]), ("caption+rules", "medium", "markdown")
@@ -144,14 +153,14 @@ class TestRealAccessAssets(IsolatedTestCase):
         self.assertGreaterEqual(sum(1 for a in figures if a["method"] == "caption+image"), 7)
         tables = store.assets("table")
         self.assertTrue(all(a["method"] == "caption+table" and a["content"].startswith("| ") for a in tables))
-        first = store.asset("table:1")
+        first = exact_asset(store, "table:1")
         assert first is not None
         self.assertEqual(
             first["content"].splitlines()[:3],
             ["| λ | SR | Comput. time (h) |", "|---|---|---|", "| 2 | -21775 | 6.47 |"],
         )
         for algorithm_id in ("algorithm:1", "algorithm:2"):
-            algorithm = store.asset(algorithm_id)
+            algorithm = exact_asset(store, algorithm_id)
             assert algorithm is not None
             self.assertGreaterEqual(algorithm["content"].count("\n"), 5)
         self.assertGreaterEqual(sum(1 for a in tables if a["cited"]), 5)

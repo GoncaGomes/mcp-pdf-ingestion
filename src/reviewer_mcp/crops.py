@@ -1,6 +1,6 @@
 """Cropped images of numbered items for models that can see images (rendered on request, never written to disk).
 
-Whether images are attached, how many per paper and their size are the `images` settings of config.json.
+Whether images are attached and their size are the `images` settings of config.json.
 """
 
 from __future__ import annotations
@@ -13,9 +13,9 @@ from reviewer_mcp.config import load_section
 
 
 def settings() -> dict[str, int | bool]:
-    """The images settings: enabled, budget (images per paper) and max_side (pixels), read on every call."""
+    """The images settings: enabled and max_side (pixels), read on every call."""
     values = load_section("images")
-    return {"enabled": bool(values["enabled"]), "budget": int(values["budget"]), "max_side": int(values["max_side"])}
+    return {"enabled": bool(values["enabled"]), "max_side": int(values["max_side"])}
 
 
 def crop_png(pdf: Path, page: int, bbox: tuple[float, float, float, float], max_side: int) -> bytes:

@@ -165,7 +165,17 @@ committed; never rewrite Git history to enforce a one-commit convention.
 
 ### Implementation block format
 
-Execution batch authorized 2026-09-26: implement MCP-03, MCP-04 and MCP-05
+Execution batch authorized 2026-09-27: MCP-06 then MCP-07, without intermediate
+owner approval if MCP-06 focused asset/store/server tests and relevant static
+checks show no new unresolved failure. Record a checkpoint before MCP-07. Run
+full unittest, ruff, basedpyright, vulture and diff checks once after MCP-07.
+Keep implemented tasks `review_pending`; stop after MCP-07. No Git mutations,
+consumer work, full-page assets, rendering redesign, cache or visual models.
+The intermediate retrieval signature is `get_asset(asset_id, include_image=False)`;
+`question` remains MCP-09B. Retain optional image transport and enabled/max_side
+settings; remove quota settings including the reader in `crops.settings`.
+
+Prior execution batch (completed, awaiting acceptance), authorized 2026-09-26: implement MCP-03, MCP-04 and MCP-05
 sequentially without intermediate owner approval, provided focused reader/store/
 server tests and relevant static checks pass for each task. Update TODO/HISTORY
 after each task. Run the full unittest suite, `ruff check .`, `basedpyright`,
@@ -390,6 +400,13 @@ assets; stale reviewer consumption state has no effect.
 **Stop:** every listed ID resolves to its own asset. Do not flatten segments in the
 extractor or rewrite detection rules. Rendering changes belong to MCP-08.
 
+Implementation note (2026-09-27): retain `get_asset(asset_id, include_image=False)`
+until MCP-09B. Public IDs encode the existing segment/stored-ID pair; SQLite keys
+and extraction are unchanged. `region_available` reports coordinate presence only;
+`image_status` distinguishes not_requested/missing_region/disabled/attached.
+Existing multipage crops identify their first-page-only coverage. Remove obsolete
+quota overrides; existing strict config validation rejects `images.budget`.
+
 **Suggested owner commit after acceptance:**
 `fix(assets): resolve unique IDs and remove consumption quotas`
 
@@ -407,6 +424,13 @@ in MCP-08, not advertised as implemented here.
 an asset starting before but continuing into the range; same labels across segments;
 every returned numbered-asset ID is resolvable.
 **Stop:** complete catalog traversal. No relevance ranking or heuristic tuning.
+
+Implementation note (2026-09-27): catalog page size is 20; SQL orders by
+`seq, segment, id`. Numeric source bounds, `caption_preview`, citation count and
+region availability appear per item. `total_assets` and kind `counts` cover the
+full filtered result; no unbounded auxiliary ID list. Reuse the text cursor/range
+helpers. Omitted kind on continuation retains its saved value; clearing a filter
+requires a fresh request without a cursor.
 
 **Suggested owner commit after acceptance:**
 `feat(assets): paginate and filter the asset catalog`

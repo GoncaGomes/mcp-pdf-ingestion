@@ -17,7 +17,6 @@ import re
 import sqlite3
 import threading
 from collections import OrderedDict
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -411,7 +410,8 @@ class PaperStore:
         rows = self._query(
             "SELECT l.id, l.page, l.text FROM lines l JOIN paragraphs p "
             "ON l.id BETWEEN p.first_line AND p.last_line "
-            "WHERE p.id = ? AND l.region = 'body' ORDER BY l.id", (paragraph_id,)
+            "WHERE p.id = ? AND l.region = 'body' ORDER BY l.id",
+            (paragraph_id,),
         )
         return [dict(row) for row in rows]
 
@@ -440,26 +440,43 @@ class PaperStore:
         )
         return int(total), [dict(row) for row in rows]
 
-    def assets(self, kind: str | None = None, first: int = 1, last: int | None = None) -> list[dict[str, Any]]:
-        """Assets on pages first..last in document order, with the number of paragraphs citing each ('cited')."""
+    def assets(
+        self,
+        kind: str | None = None,
+        first: int = 1,
+        last: int | None = None,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Numbered assets overlapping the range, ordered by sequence and the unique segment/ID pair."""
         last = self.page_count if last is None else last
         cited = "(SELECT COUNT(*) FROM mentions m WHERE m.segment = a.segment AND m.asset = a.id) AS cited"
-        where = "WHERE a.page BETWEEN ? AND ?" + (" AND a.kind = ?" if kind else "")
-        params: tuple[Any, ...] = (first, last, kind) if kind else (first, last)
-        return [dict(row) for row in self._query(f"SELECT a.*, {cited} FROM assets a {where} ORDER BY a.seq", params)]
+        where = "WHERE a.page <= ? AND a.last_page >= ?" + (" AND a.kind = ?" if kind is not None else "")
+        params: tuple[Any, ...] = (last, first, kind) if kind is not None else (last, first)
+        sql = f"SELECT a.*, {cited} FROM assets a {where} ORDER BY a.seq, a.segment, a.id"
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params += (limit, offset)
+        return [dict(row) for row in self._query(sql, params)]
 
-    def asset(self, asset_id: str, first: int = 1, last: int | None = None) -> dict[str, Any] | None:
-        """The first asset with this id on pages first..last, with its mentions (paragraph, page, text, strength)."""
-        last = self.page_count if last is None else last
-        rows = self._query(
-            "SELECT * FROM assets WHERE id = ? AND page BETWEEN ? AND ? ORDER BY seq LIMIT 1", (asset_id, first, last)
-        )
+    def asset_counts(self, kind: str | None, first: int, last: int) -> dict[str, int]:
+        """Counts over the full filtered result, independent of the catalog response page."""
+        where = "WHERE page <= ? AND last_page >= ?" + (" AND kind = ?" if kind is not None else "")
+        params: tuple[Any, ...] = (last, first, kind) if kind is not None else (last, first)
+        rows = self._query(f"SELECT kind, COUNT(*) AS n FROM assets {where} GROUP BY kind ORDER BY kind", params)
+        return {row["kind"]: row["n"] for row in rows}
+
+    def asset(self, segment: int, asset_id: str) -> dict[str, Any] | None:
+        """The exact (segment, stored ID) asset and only its mentions."""
+        rows = self._query("SELECT * FROM assets WHERE segment = ? AND id = ?", (segment, asset_id))
         if not rows:
             return None
         found = dict(rows[0])
         mentions = self._query(
-            "SELECT paragraph, page, text, strength FROM mentions WHERE segment = ? AND asset = ? ORDER BY paragraph",
-            (found["segment"], asset_id),
+            "SELECT paragraph, page, text, strength FROM mentions "
+            "WHERE segment = ? AND asset = ? ORDER BY paragraph, id",
+            (segment, asset_id),
         )
         found["mentions"] = [dict(row) for row in mentions]
         return found
@@ -500,15 +517,6 @@ class PaperStore:
         with _LOCK:
             self.con.execute("INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)", (key, value))
             self.con.commit()
-
-    def update_state(self, key: str, change: Callable[[str | None], str]) -> str:
-        """Replace a state value by change(current value) in one locked step, so parallel tool calls lose no update."""
-        with _LOCK:
-            rows = self.con.execute("SELECT value FROM state WHERE key = ?", (key,)).fetchall()
-            value = change(rows[0][0] if rows else None)
-            self.con.execute("INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)", (key, value))
-            self.con.commit()
-            return value
 
     def close(self) -> None:
         with _LOCK:

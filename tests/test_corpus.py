@@ -225,7 +225,11 @@ class TestValidationCorpus(IsolatedTestCase):
                 for kind, count in expected.captions.items():
                     self.assertEqual(len(store.assets(kind)), count, kind)
                 for asset_id, (header, row) in expected.tables.items():
-                    asset = store.asset(asset_id)
+                    matches = [a for a in store.assets() if a["id"] == asset_id]
+                    self.assertTrue(matches, asset_id)
+                    # Historical corpus expectations describe the earliest occurrence across manuscript copies.
+                    entry = min(matches, key=lambda a: (a["seq"], a["segment"], a["id"]))
+                    asset = store.asset(entry["segment"], asset_id)
                     self.assertIsNotNone(asset, asset_id)
                     rows = table_rows(asset["content"] if asset else "")
                     self.assertEqual(rows[0], squeezed(header), asset_id)

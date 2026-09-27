@@ -35,13 +35,43 @@ the consuming agent decides what to read and how to use it.
    including subsections until the next equal/higher heading, with page provenance and continuation.
 4. `search_paper(query, first_page=None, last_page=None, cursor=None)` — paginated textual matches,
    total matching paragraphs, source pages, section IDs/titles and snippets.
-5. `list_assets` — numbered items with pages and citation counts.
-6. `get_asset` — one item as text (caption, Markdown table, equation text, algorithm lines, reference) plus citing
-   sentences, optionally a cropped image when the `images` settings of `config.json` enable it (off by default); at
-   most `replies.asset_budget` (6) items per overview, each once.
+5. `list_assets(kind=None, first_page=None, last_page=None, cursor=None)` — paginated numbered items,
+   including references, with canonical IDs and source bounds.
+6. `get_asset(asset_id, include_image=False)` — repeatable full extracted content and citations for an exact asset,
+   optionally with the existing crop when imagery is enabled. No asset/image consumption quotas.
 
-Page reads and search now cover the whole PDF by default; section reads use the complete extracted outline.
-Asset/image budgets still apply; unambiguous asset IDs and explicit visual questions remain future work (MCP-06 onward).
+Canonical IDs include segment identity, such as `segment:2/figure:1`, and keep the original printed `label`
+separate. Use catalog IDs unchanged: short IDs such as `figure:1` are rejected. Retrieval returns `document_id`,
+`id`, `label`, `kind`, numeric `first_page`/`last_page`, `caption`, `content`, `format`, `method`, `confidence`,
+`cited_count` and up to 12 `cited_by` contexts. Duplicate labels in different segments remain distinct.
+
+`region_available` reports stored coordinates, not crop quality. `images_enabled` reports configuration;
+`image_status` is `not_requested`, `missing_region`, `disabled` or `attached`. An image is rendered only when
+explicitly requested, enabled and a region exists. The existing renderer is unchanged: a multipage asset's image
+covers its first page only (`rendered_pages` and `visual_coverage` report this). No full-page assets, image cache
+or visual model/questions are implemented yet. Overview no longer resets any consumption state; stale persisted
+counters have no effect. Text and asset access are repeatable and independent of overview calls.
+
+The catalog returns up to `ASSET_PAGE_SIZE = 20` items per call, ordered by stored sequence, then segment and
+stored ID as a unique tie-breaker. Defaults cover the whole PDF and all numbered kinds: `figure`, `table`,
+`equation`, `algorithm`, `listing`, `statement`, `reference`. Full-page assets and `kind="page"` await MCP-08.
+
+```json
+{"document_id":"<fingerprint>","items":[{"id":"segment:2/figure:1","label":"Fig. 1","kind":"figure",
+ "first_page":5,"last_page":5,"caption_preview":"Fig. 1. Example caption","cited_count":2,"region_available":true}],
+ "total_assets":1,"counts":{"figure":1},"next_cursor":null}
+```
+
+`total_assets` and kind `counts` cover the entire filtered result, including items on subsequent response pages.
+`caption_preview` is a whitespace-normalized caption truncated to 140 characters; use `get_asset` for full content.
+Catalog ranges are inclusive and select overlap (`asset.page <= last_page` and `asset.last_page >= first_page`):
+an asset beginning earlier is included if it continues into the requested range. Neither bound selects all pages;
+first only selects one page; last only selects pages 1 through last. Invalid ranges are errors.
+
+Pass `next_cursor` unchanged until null. Omitted kind/bounds retain the cursor's filters; conflicting explicit
+filters are errors. To change or clear a kind filter, start without a cursor. Document, operation, kind, range
+and result position are preserved; cursor replay is deterministic. Empty results contain `items: []`,
+`total_assets: 0`, `counts: {}` and null continuation. No unpaginated auxiliary ID list is returned.
 
 For page reads and search, bounds are inclusive: neither bound selects the whole PDF; first only selects that page;
 last only selects pages 1 through last. Invalid ranges are errors. Pass `next_cursor` unchanged until it is null;
@@ -85,8 +115,8 @@ retain its range, while conflicting query/bounds are errors. Cursors are opaque 
 limited to 4,096 characters, and bound to document identity and operation. They can be replayed unchanged;
 legacy page-number cursors are rejected. No cursor signing or server-side cursor state is used.
 Zero matches return `total_hits: 0`, an empty `hits` list and null continuation; they do not establish scientific
-absence. Text reads/search invoke no model. OCR, visual questions, asset quota removal and catalog/rendering
-improvements remain outside these implemented text tools. External Agents SDK verification is deferred.
+absence. Text and asset tools invoke no model. OCR, visual questions and rendering
+improvements remain future work. External Agents SDK verification is deferred.
 
 ## Environment
 
@@ -95,8 +125,8 @@ improvements remain outside these implemented text tools. External Agents SDK ve
 * `PDF_INGESTION_RUN_DIR` — isolated run directory for derived data; required, may not exist yet (persistence creates
   it on demand) and must not point to an existing file.
 * `REVIEWER_CONFIG` — JSON file overriding values of `config.json`: layout factors (`heuristics`), image
-  attachments (`images`: `enabled`, `budget`, `max_side`) and reply budgets (`replies`: `asset_budget`). A new
-  `get_paper_overview` restores the remaining asset/image budgets; text reads have no consumption budget.
+  attachments (`images`: `enabled`, `max_side`). Remove obsolete `images.budget` and `replies.asset_budget`
+  overrides; the former is rejected by existing strict settings validation. There are no consumption quotas.
 * `REVIEWER_SCRATCH_BASE` — legacy store base (default `/tmp/reviewer`) used only when a store is opened without an
   explicit run directory (internal extractor tests); the server always uses its bound run directory.
 

@@ -363,3 +363,47 @@ MCP-01 status text now agrees with its pre-existing `done` table entry; MCP-02
 remains `review_pending` without invented acceptance. No external SDK integration,
 endpoint calls, scientific validation or Git mutations occurred. Stop after MCP-05;
 owner acceptance is the next step.
+
+## 2026-09-27 — MCP-06 — Exact asset identity without consumption quotas
+
+Status: `review_pending`. Public IDs include segment and stored ID; store lookup
+and mentions use the exact pair. Assets across the whole PDF are available through
+`get_asset(asset_id, include_image=False)`. Removed quotas, counter writes and
+overview resets, plus obsolete config/readers. Kept crop rendering and optional
+image transport; metadata distinguishes region availability and image status.
+
+Focused venv checks: `python -m unittest discover -s tests -p test_assets.py -q`
+6 run/1 skip; `test_structure.py` 8 run/1 skip; `test_server.py` 14 OK;
+`test_store.py` 11 run/1 known chmod failure (511 != 448)/1 corpus skip.
+The first server run used an obsolete images.budget override; corrected the test
+to cover persisted state, preserving strict config validation. No new unresolved
+failures. `ruff check src tests` clean; `basedpyright` 0/0/0; diff check clean.
+Next: authorized MCP-07, then final batch checks. No Git mutations or model calls.
+
+## 2026-09-27 — MCP-07 — Paginated, filtered asset catalog
+
+Status: `review_pending`; implementation and batch validation complete. Catalog uses
+20-item SQL pages with unique seq/segment/ID ordering, overlap ranges, all existing
+numbered kinds including references, full filtered counts and canonical IDs.
+Cursor state preserves document/operation/kind/range/offset. Caption previews and
+region availability are explicit; there is no unbounded auxiliary ID list.
+
+Focused venv checks: `python -m unittest discover -s tests -p test_server.py -q`
+17 OK; `test_assets.py` 6 run/1 corpus skip; `ruff check src tests` clean;
+`basedpyright` 0/0/0. Corpus call-site adaptation preserves the historical first
+occurrence expectation by selecting its segment explicitly.
+
+Final MCP-06/MCP-07 batch checks, run once after MCP-07:
+- `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py" -q`:
+  93 run, 87 passed, 1 failure, 5 skips. The only failure is the known Windows
+  chmod assertion in `test_store_location_permissions_and_cache` (511 != 448).
+  The five corpus tests require REVIEWER_WORKSPACE; no new failures remain.
+  Full log: `tmp/mcp-06-07-unittest.log` (ignored).
+- `.venv/Scripts/ruff.exe check .`: clean; `.venv/Scripts/basedpyright.exe`: 0/0/0;
+  `.venv/Scripts/vulture.exe`: clean; `git diff --check`: clean (LF/CRLF notice only).
+
+The existing CPython 3.14.3 environment and dependencies were reused unchanged.
+Rendering itself, extraction heuristics/schema/fingerprints and MCP-03–05 text
+contracts are preserved. Full-page assets, image caching and visual models remain
+future work. No Git mutations, consumer work or model calls occurred.
+Next: owner review/acceptance; stop after MCP-07.

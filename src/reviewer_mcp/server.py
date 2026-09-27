@@ -9,11 +9,11 @@ Descriptions and replies are kept short: they share the agent's context with the
 from __future__ import annotations
 
 import json
-from collections import Counter
+import re
 from collections.abc import Callable
 from functools import wraps
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
@@ -22,15 +22,8 @@ from mcp.types import TextContent
 from pydantic import Field
 
 from reviewer_mcp import crops, reading
-from reviewer_mcp.config import DocumentConfig, load_document_config, load_section
-from reviewer_mcp.papers import (
-    ASSETS_KEY,
-    IMAGES_KEY,
-    ReviewError,
-    overview,
-    page_span,
-    part_range,
-)
+from reviewer_mcp.config import DocumentConfig, load_document_config
+from reviewer_mcp.papers import ReviewError, overview
 from reviewer_mcp.runner import run_server
 from reviewer_mcp.store import PaperStore
 
@@ -42,14 +35,15 @@ files, caches and extraction are handled internally.
 - read_pages: repeatable page-labelled text; continue with next_cursor until null.
 - read_section: an outline section by ID, with complete continuation and page provenance.
 - search_paper: paginated textual matches with pages, section IDs and snippets.
-- list_assets, get_asset: numbered figures, tables, equations, algorithms and references, with content as text and
-  citing sentences; get_asset attaches a cropped image when requested and images are enabled.
+- list_assets: paginated numbered assets across the PDF, with canonical segment IDs and overlap filters.
+- get_asset: repeatable exact asset content and citations; optional crops when images are enabled.
 """
 
 # Reply budgets, not layout heuristics.
 MENTION_ITEMS = 12
 MENTION_CONTEXT = 100
 CAPTION_PREVIEW = 140
+ASSET_PAGE_SIZE = 20  # numbered assets per catalog response
 
 mcp = FastMCP("reviewer", instructions=INSTRUCTIONS)
 
@@ -91,7 +85,7 @@ def _open() -> tuple[Path, PaperStore]:
     return config.pdf_path, PaperStore.open(config.pdf_path, run_dir=config.run_dir)
 
 
-@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True})
+@mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
 @_agent_errors
 def get_paper_overview() -> dict[str, Any]:
     """Call first. Returns the document identity, page count, the extracted title when one is found, the full-PDF
@@ -148,92 +142,104 @@ def search_paper(
     return reading.search(store, query, first_page, last_page, cursor)
 
 
+def _public_asset_id(item: dict[str, Any]) -> str:
+    return f"segment:{item['segment']}/{item['id']}"
+
+
+def _region_available(item: dict[str, Any]) -> bool:
+    return all(item[key] is not None for key in ("x0", "y0", "x1", "y1"))
+
+
+def _asset_entry(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": _public_asset_id(item),
+        "label": item["label"],
+        "kind": item["kind"],
+        "first_page": item["page"],
+        "last_page": item["last_page"],
+        "caption_preview": " ".join(item["caption"].split())[:CAPTION_PREVIEW],
+        "cited_count": item["cited"],
+        "region_available": _region_available(item),
+    }
+
+
 @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
 @_agent_errors
 def list_assets(
-    kind: Annotated[AssetKind | None, Field(description="Only this kind; omit for all kinds but references.")] = None,
+    kind: Annotated[
+        AssetKind | None, Field(description="Only this numbered kind; omit for all, including references.")
+    ] = None,
+    first_page: Annotated[int | None, Field(ge=1, description="First PDF page; alone selects one page.")] = None,
+    last_page: Annotated[int | None, Field(ge=1, description="Last PDF page; alone starts at page 1.")] = None,
+    cursor: Annotated[
+        str | None, Field(max_length=reading.CURSOR_LIMIT, description="Opaque next_cursor; pass unchanged.")
+    ] = None,
 ) -> dict[str, Any]:
-    """List the numbered items of the part (default: manuscript): id, label, page, caption start and how many
-    paragraphs cite it; never-cited ids under 'uncited'. Choose what to inspect with get_asset."""
+    """List up to 20 numbered assets with canonical IDs, source spans, caption previews and citation counts.
+    Defaults to the whole PDF, including references; ranges select overlapping assets. Counts cover the full
+    filtered result. Continue with next_cursor until null. Region availability does not imply crop quality."""
     _, store = _open()
-    first, last = part_range(store, "manuscript")
-    everything = store.assets(first=first, last=last)
-    shown = [a for a in everything if (a["kind"] == kind if kind else a["kind"] != "reference")]
-    items = []
-    for item in shown:
-        entry: dict[str, Any] = {
-            "id": item["id"],
-            "label": item["label"],
-            "page": page_span(item["page"], item["last_page"]),
-            "cited": item["cited"],
-        }
-        preview = " ".join((item["caption"] or item["content"]).split())
-        if preview:
-            entry["caption"] = preview[:CAPTION_PREVIEW]
-        if item["confidence"] == "low":
-            entry["region"] = "not located (caption only)"
-        items.append(entry)
-    reply: dict[str, Any] = {
-        "manuscript_pages": page_span(first, last),
-        "counts": dict(sorted(Counter(a["kind"] for a in everything).items())),
-        "items": items,
-        "uncited": [a["id"] for a in shown if a["cited"] == 0],
+    document_id = store.meta()["fingerprint"]
+    offset = 0
+    if cursor is not None:
+        state = reading._decode_cursor(cursor, document_id, "list_assets", {"kind", "first", "last", "offset"})
+        if kind is not None and kind != state["kind"]:
+            raise ReviewError("kind conflicts with the cursor; omit it or repeat the original filter.")
+        kind = state["kind"]
+        first, last = reading._cursor_range(state, store.page_count, first_page, last_page)
+        offset = state["offset"]
+        if type(offset) is not int or offset < 0:
+            raise ReviewError("Invalid cursor result position; restart without a cursor.")
+    else:
+        first, last = reading.page_range(store.page_count, first_page, last_page)
+    if kind is not None and kind not in get_args(AssetKind):
+        raise ReviewError(f"Invalid kind; use one of {get_args(AssetKind)} or omit it for all numbered assets.")
+    counts = store.asset_counts(kind, first, last)
+    total = sum(counts.values())
+    if cursor is not None and offset >= total:
+        raise ReviewError("Invalid cursor result position; restart without a cursor.")
+    shown = store.assets(kind, first, last, limit=ASSET_PAGE_SIZE, offset=offset)
+    next_cursor = None
+    if offset + len(shown) < total:
+        next_cursor = reading._encode_cursor(
+            {
+                "document_id": document_id,
+                "operation": "list_assets",
+                "kind": kind,
+                "first": first,
+                "last": last,
+                "offset": offset + len(shown),
+            }
+        )
+    return {
+        "document_id": document_id,
+        "items": [_asset_entry(item) for item in shown],
+        "total_assets": total,
+        "counts": counts,
+        "next_cursor": next_cursor,
     }
-    if not kind and any(a["kind"] == "reference" for a in everything):
-        reply["hint"] = "References are listed with kind='reference'."
-    return reply
 
 
-@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False})
+@mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
 @_agent_errors
 def get_asset(
-    asset: Annotated[
-        str,
-        Field(
-            pattern=r"^[a-z]+:[A-Za-z0-9.]+$",
-            description="Item id from list_assets, e.g. 'figure:3', 'table:II', 'theorem:1', 'reference:12'.",
-        ),
+    asset_id: Annotated[
+        str, Field(max_length=512, description="Canonical ID from list_assets, e.g. segment:2/figure:1.")
     ],
     include_image: Annotated[
-        bool, Field(description="Attach a cropped image, if images are enabled on this server (a few per paper).")
+        bool, Field(description="Attach the existing crop if enabled and a region is available.")
     ] = False,
 ) -> list[Any]:
-    """Inspect one numbered item: caption and content as text (table cells as Markdown, equations as linear text and
-    MathML, algorithm lines, theorem-like statements with their proof, reference entry), how it was located, and the
-    sentences citing it. Each item is returned in full once until the next get_paper_overview."""
+    """Retrieve an exact numbered asset and its citations throughout the PDF. Returns full extracted content,
+    source bounds, method/confidence and visual availability. Requests are repeatable and have no consumption quota.
+    Optional images use the existing crop renderer; no visual model is invoked."""
+    match = re.fullmatch(r"segment:(0|[1-9][0-9]{0,17})/([a-z]+:[A-Za-z0-9.]+)", asset_id)
+    if match is None:
+        raise ReviewError("Invalid asset_id: use a canonical ID from list_assets, e.g. segment:2/figure:1.")
     pdf, store = _open()
-    first, last = part_range(store, "manuscript")
-    found = store.asset(asset, first, last)
+    found = store.asset(int(match[1]), match[2])
     if found is None:
-        elsewhere = store.asset(asset)
-        where = f" It exists on page {elsewhere['page']}, outside the part selected." if elsewhere else ""
-        raise ReviewError(
-            f"No item {asset!r} in the selected part (pages {page_span(first, last)}).{where} "
-            "Call list_assets for valid ids."
-        )
-    budget = int(load_section("replies")["asset_budget"])
-    inspected: list[str] = []
-
-    def claim(value: str | None) -> str:
-        # one locked step, so parallel get_asset calls of one turn never exceed the budget
-        inspected.extend(item for item in (value or "").split(",") if item)
-        if found["id"] in inspected or len(inspected) >= budget:
-            return value or ""
-        return ",".join([*inspected, found["id"]])
-
-    store.update_state(ASSETS_KEY, claim)
-    if found["id"] in inspected and not include_image:
-        return [TextContent(type="text", text=f"{found['id']} was already returned.")]
-    if found["id"] not in inspected and len(inspected) >= budget:
-        return [
-            TextContent(
-                type="text",
-                text=(
-                    f"The budget of {budget} items is used ({', '.join(inspected)}). Rely on the list_assets "
-                    "captions and search_paper for other items."
-                ),
-            )
-        ]
+        raise ReviewError(f"Unknown asset_id {asset_id!r}; call list_assets for valid IDs in this document.")
     mentions = found["mentions"]
     paragraphs: dict[int, str] = {}
     for page_no in sorted({m["page"] for m in mentions[:MENTION_ITEMS]}):
@@ -248,33 +254,36 @@ def get_asset(
             entry["certainty"] = "weak (bare number)"
         cited_by.append(entry)
     detail: dict[str, Any] = {
-        "id": found["id"],
+        "document_id": store.meta()["fingerprint"],
+        "id": _public_asset_id(found),
+        "kind": found["kind"],
         "label": found["label"],
-        "page": page_span(found["page"], found["last_page"]),
+        "first_page": found["page"],
+        "last_page": found["last_page"],
         "caption": found["caption"],
         "content": found["content"],
         "format": found["content_format"],
-        "located_by": f"{found['method']} ({found['confidence']} confidence)",
+        "method": found["method"],
+        "confidence": found["confidence"],
         "cited_count": len(mentions),
         "cited_by": cited_by,
     }
     image: Image | None = None
     images = crops.settings()
+    detail["region_available"] = _region_available(found)
+    detail["images_enabled"] = images["enabled"]
     if not include_image:
-        detail["image"] = "not requested"
+        detail["image_status"] = "not_requested"
+    elif not detail["region_available"]:
+        detail["image_status"] = "missing_region"
     elif not images["enabled"]:
-        detail["image"] = "not attached: images are disabled on this server; rely on the caption and content"
-    elif found["x0"] is None:
-        detail["image"] = "not attached: no region was located for this item"
+        detail["image_status"] = "disabled"
     else:
-        used = int(store.get_state(IMAGES_KEY) or 0)
-        if used >= images["budget"]:
-            detail["image"] = f"not attached: the budget of {images['budget']} images for this paper is used"
-        else:
-            bbox = (found["x0"], found["y0"], found["x1"], found["y1"])
-            image = Image(data=crops.crop_png(pdf, found["page"], bbox, int(images["max_side"])), format="png")
-            store.set_state(IMAGES_KEY, str(used + 1))
-            detail["image"] = f"attached ({used + 1} of {images['budget']})"
+        bbox = (found["x0"], found["y0"], found["x1"], found["y1"])
+        image = Image(data=crops.crop_png(pdf, found["page"], bbox, int(images["max_side"])), format="png")
+        detail["image_status"] = "attached"
+        detail["rendered_pages"] = [found["page"]]
+        detail["visual_coverage"] = "partial" if found["last_page"] > found["page"] else "single_page"
     text = TextContent(type="text", text=json.dumps(detail, ensure_ascii=False))
     return [text, image] if image is not None else [text]
 

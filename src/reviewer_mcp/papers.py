@@ -16,8 +16,6 @@ from reviewer_mcp.store import PaperStore
 
 # Reply budgets (characters or items), not layout heuristics.
 TITLE_BUDGET = 300
-IMAGES_KEY = "images_sent"
-ASSETS_KEY = "assets_returned"  # item ids get_asset returned in full during the current review
 
 
 class ReviewError(ValueError):
@@ -82,7 +80,4 @@ def overview(store: PaperStore, pdf: Path) -> dict[str, Any]:
     unreadable = [p["page"] for p in store.pages() if p["source"] == "none"]
     if unreadable:
         reply["warnings"] = [f"pages {unreadable} have no text layer (e.g. scanned images); their text cannot be read"]
-    # Overview still resets the image and item budgets until MCP-06.
-    store.set_state(IMAGES_KEY, "0")
-    store.set_state(ASSETS_KEY, "")
     return reply
