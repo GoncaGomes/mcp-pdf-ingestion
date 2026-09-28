@@ -82,14 +82,10 @@
     }
     },
   "images": {
-    "enabled": {
-      "value": false,
-      "description": "Allow optional PNG attachments for numbered regions and full-page assets when get_asset requests an image."
-    },
     "max_side": {
       "value": 1280,
       "unit": "pixels",
-      "description": "Longest side of an attached image."
+      "description": "Longest side of the PNG supplied for an explicit visual question."
     }
   }
 }

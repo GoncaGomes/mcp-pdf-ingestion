@@ -5,30 +5,31 @@ Read `AGENTS.md` and the selected task in `PLAN.md` before editing.
 
 ## Current work
 
-- Assigned batch: MCP-08A -> MCP-08B (explicitly authorized 2026-09-28).
+- Assigned batch: MCP-09A -> MCP-09B (explicitly authorized 2026-09-28).
 - MCP-03, MCP-04 and MCP-05: `review_pending`; implementation and batch validation complete.
 - MCP-06 and MCP-07: `review_pending`; implementation and batch validation complete.
 - MCP-08A and MCP-08B: `review_pending`; implementation and batch validation complete.
-- Stopped after MCP-08B; next step is owner review/acceptance.
+- MCP-09A and MCP-09B: `review_pending`; implementation and batch validation complete.
+- Stopped after MCP-09B; next step is owner review/acceptance.
 - MCP-01: `done`, consistent with the existing owner-maintained task table.
 - MCP-02: `review_pending`; no new owner acceptance recorded.
 - MCP-00 is planning, not an implementation task.
 
 Statuses: `pending`, `in_progress`, `review_pending`, `done`, `blocked`.
 Only explicit owner acceptance permits `done`. This assigned batch may continue
-sequentially after focused checks; full checks run once after MCP-08B.
+sequentially after focused checks; full checks run once after MCP-09B.
 
 ## Thread and commit tracking
 
 One task row is a deliverable, usually one owner-made commit. A task can span
 several assigned blocks/threads. Intermediate blocks leave the parent `in_progress`;
 only the final block can mark it `review_pending`. Owner acceptance permits `done`.
-Do not automatically start an unassigned block; the assigned MCP-08A–08B batch is authorized.
+Do not automatically start an unassigned block; the MCP-09A -> MCP-09B batch is authorized.
 Use PLAN for scope and commit messages.
 
 Observed 2026-09-28 (read-only Git inspection): branch `feat/pdf-evidence-tool`,
-HEAD `6d16490` (`feat(assets): add unique IDs and paginated access without quotas`).
-Working tree was clean before MCP-08A/08B. Commit presence does not imply owner
+HEAD `6fc5f1d` (`feat(rendering): render and cache PDF crops and full pages`).
+Working tree was clean before MCP-09A/09B. Commit presence does not imply owner
 acceptance; earlier task statuses are unchanged.
 
 ## Tasks
@@ -44,13 +45,13 @@ acceptance; earlier task statuses are unchanged.
 | MCP-07 | Paginated, filtered asset catalog | review_pending |
 | MCP-08A | Exact crops and full-page images | review_pending |
 | MCP-08B | Reuse of materialized images | review_pending |
-| MCP-09A | One-call visual helper and diagnostics | pending |
-| MCP-09B | Visual questions through get_asset | pending |
+| MCP-09A | One-call visual helper and diagnostics | review_pending |
+| MCP-09B | Visual questions through get_asset | review_pending |
 | MCP-10 | Package identity and setup alignment | pending |
 | MCP-11A | Complete local stdio contract verification | pending |
 | MCP-11B | Authorized probes and consumer handoff evidence | pending |
 
-Dependencies follow table order. External SDK integration is deferred for this batch;
+Dependencies follow table order. Real endpoint and consumer integration are deferred;
 the coding agent does not inspect or modify the consumer repository.
 
 ## MCP-02 implementation blocks
@@ -86,15 +87,15 @@ means its specified checks passed; it does not mean owner acceptance of the task
 
 ## Resume note
 
-- MCP-08A/MCP-08B implemented; both `review_pending`. Earlier task acceptance is unchanged.
-- Added exact rotated crops/full pages, page catalog/text, source page IDs and explicit clipping/coverage.
-- Lazy atomic PNGs embed geometry/settings/identity metadata; repeat/reopen/restart reuse verified.
-- Source: crops.py/server.py/config.json; tests: test_crops.py/test_server.py/pdf_fixtures.py.
-- Docs updated: README, PLAN, HISTORY and AGENTS code map; no model/dependency/schema/heuristic changes.
-- MCP-08A focused unittest: crops 3 OK, server 20 OK; Ruff/Basedpyright/diff clean.
-- MCP-08B focused unittest: crops 11 OK, server 21 OK; crops 11 OK again after exception-import correction.
-- Full `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py" -q`: 108 run, 102 passed, 1 failure, 5 skips.
-- Sole failure: known Windows chmod assertion (511 != 448); corpus skips lack REVIEWER_WORKSPACE PDFs.
-- Full Ruff/Basedpyright found a long line/private import; corrected, focused Ruff and full Basedpyright clean.
-- Full Vulture/diff checks clean. Log: tmp/mcp-08-unittest.log; existing venv CPython 3.14.3 reused.
-- Next: owner review/acceptance. Stop after MCP-08B; no Git mutations, consumer work, remote probes or model calls.
+- MCP-09A/MCP-09B implemented, both review_pending; earlier task acceptance unchanged. Stop after MCP-09B.
+- Lazy visual settings, one completion, atomic redacted diagnostics before validation, cancellation-safe serialization.
+- get_asset(asset_id, question=None) returns text/extraction plus separate visual status/coverage/answer; no-question path is zero-call.
+- Source: visual_inspection.py, server.py, config.py/config.json, crops.py; tests: test_visual_inspection.py, test_server.py, test_crops.py.
+- Docs: README/PLAN/HISTORY/AGENTS/TODO; dependency files: pyproject.toml/uv.lock (openai 3.19.2 plus jiter/sniffio; no existing upgrades).
+- MCP-09A focused unittest: helper 6 OK, config 12 OK; Ruff/Basedpyright/Vulture/diff clean after test lint correction.
+- MCP-09B focused unittest: server 24 OK, final helper 10 OK, crops 11 OK; cache error assertion updated to verify typed error and original cause.
+- Final `.venv/Scripts/python.exe -m unittest discover -s tests -p 'test_*.py' -q`: 121 run, 115 passed, 1 failure, 5 corpus skips.
+- Sole failure: known Windows chmod assertion (511 != 448); corpus unavailable without REVIEWER_WORKSPACE papers. Log: tmp/mcp-09-unittest.log.
+- Final `.venv/Scripts/ruff.exe check .`, `.venv/Scripts/basedpyright.exe`, `.venv/Scripts/vulture.exe`, `git diff --check`: clean.
+- Existing CPython 3.14.3 venv reused; Python 3.12 not separately tested. SDK signatures checked; fake clients/mock HTTP only, no endpoint/consumer validation.
+- Next: owner review/acceptance and optional owner commits per PLAN. No Git mutations or MCP-10 work.

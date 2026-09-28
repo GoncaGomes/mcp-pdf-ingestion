@@ -8,6 +8,8 @@ Descriptions and replies are kept short: they share the agent's context with the
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import re
 from collections.abc import Callable
@@ -17,11 +19,10 @@ from typing import Annotated, Any, Literal, get_args
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
-from fastmcp.utilities.types import Image
 from mcp.types import TextContent
 from pydantic import Field
 
-from reviewer_mcp import crops, reading
+from reviewer_mcp import crops, reading, visual_inspection
 from reviewer_mcp.config import DocumentConfig, load_document_config
 from reviewer_mcp.papers import ReviewError, overview
 from reviewer_mcp.runner import run_server
@@ -36,7 +37,7 @@ files, caches and extraction are handled internally.
 - read_section: an outline section by ID, with complete continuation and page provenance.
 - search_paper: paginated textual matches with pages, section IDs and snippets.
 - list_assets: paginated numbered assets by default; kind=page selects physical pages, with range filters.
-- get_asset: repeatable exact content and citations or page text; optional cached PNGs when images are enabled.
+- get_asset: exact extracted content or page text; an explicit question requests one visual inspection.
 """
 
 # Reply budgets, not layout heuristics.
@@ -66,6 +67,16 @@ def bind_document() -> DocumentConfig:
 
 def _agent_errors[F: Callable[..., Any]](func: F) -> F:
     """Report problems the caller can fix as tool errors whose message says what to do."""
+
+    if inspect.iscoroutinefunction(func):
+        @wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await func(*args, **kwargs)
+            except (ReviewError, FileNotFoundError, ValueError) as error:
+                raise ToolError(str(error)) from error
+
+        return async_wrapper  # type: ignore[return-value]
 
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -230,19 +241,27 @@ def list_assets(
     }
 
 
-@mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+@mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": False, "destructiveHint": False})
 @_agent_errors
-def get_asset(
+async def get_asset(
     asset_id: Annotated[
         str, Field(max_length=512, description="Canonical ID: segment:2/figure:1 or page:4 (physical PDF page).")
     ],
-    include_image: Annotated[
-        bool, Field(description="Attach a PNG of the selected region or full page when images are enabled.")
-    ] = False,
-) -> list[Any]:
-    """Retrieve exact asset content/citations or a page's stored text, with source bounds and visual availability.
-    Optional PNGs report clipping and actual rendered coverage; multipage assets render only their first region.
-    Repeatable, without consumption quotas or model calls."""
+    question: Annotated[str | None, Field(description="Explicit non-blank question about the selected image.")] = None,
+) -> list[TextContent]:
+    """Return extracted content and source metadata. A question requests one fresh visual inspection with
+    separate observations and diagnostics. Missing regions never fall back to a full page automatically."""
+    if question is not None and (not isinstance(question, str) or not question.strip()):
+        raise ReviewError("question must be a non-blank string, or omitted for deterministic content.")
+    config = _DOCUMENT
+    if config is None:
+        raise RuntimeError("No document bound.")
+    pdf, detail, bbox = await asyncio.to_thread(_resolve_asset, asset_id)
+    return await _asset_response(pdf, detail, bbox, question, config.run_dir)
+
+
+def _resolve_asset(asset_id: str) -> tuple[Path, dict[str, Any], crops.Bounds | None]:
+    """Complete synchronous store reads before any model/network await."""
     page_match = re.fullmatch(r"page:([1-9][0-9]{0,17})", asset_id)
     match = re.fullmatch(r"segment:(0|[1-9][0-9]{0,17})/([a-z]+:[A-Za-z0-9.]+)", asset_id)
     if match is None and page_match is None:
@@ -257,7 +276,7 @@ def get_asset(
             "content": stored_page["text"], "format": "text", "method": "page_text",
             "text_source": stored_page["source"], "page_label": stored_page["label"],
         }
-        return _asset_response(pdf, detail, None, include_image)
+        return pdf, detail, None
     assert match is not None
     found = store.asset(int(match[1]), match[2])
     if found is None:
@@ -292,15 +311,10 @@ def get_asset(
     }
     bbox = (found["x0"], found["y0"], found["x1"], found["y1"]) if _region_available(found) else None
     detail["region_available"] = _region_available(found)
-    return _asset_response(pdf, detail, bbox, include_image)
+    return pdf, detail, bbox
 
 
-def _asset_response(
-    pdf: Path, detail: dict[str, Any], bbox: crops.Bounds | None, include_image: bool,
-) -> list[Any]:
-    image: Image | None = None
-    images = crops.settings()
-    detail["images_enabled"] = images["enabled"]
+def _describe_asset(pdf: Path, detail: dict[str, Any], bbox: crops.Bounds | None) -> None:
     first, last = detail["first_page"], detail["last_page"]
     detail["source_page_ids"] = [f"page:{page}" for page in range(first, last + 1)]
     detail["rendered_pages"] = []
@@ -320,27 +334,54 @@ def _asset_response(
     detail["visual_available"] = region["available"]
     if region["clipped"]:
         detail["limitations"].append("The region was clipped to the visible page.")
-    if not include_image:
-        detail["image_status"] = "not_requested"
-    elif not images["enabled"]:
-        detail["image_status"] = "disabled"
-    elif not region["available"]:
-        detail["image_status"] = "unavailable"
-    else:
-        assert _DOCUMENT is not None
-        try:
-            data = crops.cached_png(
-                pdf, first, bbox, int(images["max_side"]), run_dir=_DOCUMENT.run_dir,
-                document_id=detail["document_id"], asset_id=detail["id"], region=region,
-            )
-        except (OSError, RuntimeError) as error:
-            raise ReviewError("Image rendering or persistence failed; no image was attached.") from error
-        image = Image(data=data, format="png")
-        detail["image_status"] = "attached"
-        detail["rendered_pages"] = [first]
-        detail["visual_coverage"] = "partial" if last > first or region["clipped"] else "single_page"
-    text = TextContent(type="text", text=json.dumps(detail, ensure_ascii=False))
-    return [text, image] if image is not None else [text]
+
+
+async def _asset_response(
+    pdf: Path, detail: dict[str, Any], bbox: crops.Bounds | None, question: str | None, run_dir: Path,
+) -> list[TextContent]:
+    try:
+        await asyncio.to_thread(_describe_asset, pdf, detail, bbox)
+    except (OSError, RuntimeError, ValueError):
+        detail["visual_available"] = False
+        detail["render"] = {"available": False, "reason": "Source geometry could not be read."}
+    result: dict[str, Any] = {"status": "not_requested"}
+    if question is not None:
+        if not detail["visual_available"]:
+            result = {"status": "unavailable", "reason": detail["render"]["reason"]}
+        else:
+            def render() -> bytes:
+                max_side = crops.settings()["max_side"]
+                detail["render_settings"] = {
+                    "max_side": max_side, "renderer_version": crops.RENDERER_VERSION,
+                    "colorspace": "RGB", "alpha": False,
+                }
+                return crops.cached_png(
+                    pdf, detail["first_page"], bbox, max_side, run_dir=run_dir,
+                    document_id=detail["document_id"], asset_id=detail["id"], region=detail["render"],
+                )
+
+            try:
+                data = await asyncio.to_thread(render)
+            except crops.ImagePersistenceError:
+                result = {"status": "image_persistence_error", "reason": "Required PNG persistence failed."}
+            except (OSError, RuntimeError, ValueError):
+                result = {"status": "render_error", "reason": "Selected image rendering failed."}
+            else:
+                detail["rendered_pages"] = [detail["first_page"]]
+                detail["visual_coverage"] = (
+                    "partial" if detail["last_page"] > detail["first_page"] or detail["render"]["clipped"]
+                    else "single_page"
+                )
+                result = await visual_inspection.inspect_image(
+                    png=data, question=question, context=detail,
+                    image_reference=crops.image_reference(detail["document_id"], detail["id"]), run_dir=run_dir,
+                )
+    detail["visual"] = {
+        **result, "source_page_ids": detail["source_page_ids"], "rendered_pages": detail["rendered_pages"],
+        "visual_coverage": detail["visual_coverage"], "render": detail["render"],
+        "limitations": detail["limitations"],
+    }
+    return [TextContent(type="text", text=json.dumps(detail, ensure_ascii=False))]
 
 
 def main() -> None:

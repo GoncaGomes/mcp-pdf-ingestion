@@ -17,6 +17,7 @@ keywords = ["mcp", "document ingestion", "academic", "information retrieval", "p
 dependencies = [
     "fastmcp>=4.0.3,<5",
     "mcp>=2.2,<3",
+    "openai>=3.6.0,<4",
     "pymupdf>=1.26",
     "ruff>=0.16.6",
 ]

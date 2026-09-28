@@ -26,14 +26,15 @@ removing reviewer-only features.
 
 | File | Responsibility |
 | --- | --- |
-| `server.py` | Tool registration, signatures, errors, document binding and entry point. |
+| `server.py` | Tool registration, async asset questions/errors, document binding and entry point. |
 | `papers.py` | Overview, title and part helpers for the bound document. |
 | `reading.py` | Deterministic text reads/search, range validation and opaque continuation cursors. |
 | `store.py` (`PaperStore`) | SQLite queries, cache and persisted state. |
 | `document.py`, `indexes.py`, `structure.py` | Extraction, indexes and document segments. |
 | `assets.py` | Asset detection and extraction metadata. |
 | `crops.py` | Crop/full-page geometry, rendering, and lazy atomic PNG persistence/reuse under the bound run directory. |
-| `config.py`, `runner.py` | Settings (document configuration, section values) and process execution. |
+| `visual_inspection.py` | Single-call async visual helper, process-wide model serialization, response validation and atomic run-local diagnostics. |
+| `config.py`, `runner.py` | Settings (document configuration, lazy visual environment, section values) and process execution. |
 | `tests/pdf_fixtures.py`, `tests/` | Synthetic PDFs and unittest coverage. |
 | Root `pyproject.toml` | Dependencies, package settings and entry point. |
 

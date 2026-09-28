@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import pymupdf as fitz
 
@@ -44,6 +46,42 @@ class DocumentConfig:
 
     pdf_path: Path
     run_dir: Path
+
+
+@dataclass(frozen=True)
+class VisualConfig:
+    """Loaded only for an explicit inspection; credentials are excluded from repr."""
+
+    base_url: str = field(repr=False)
+    api_key: str = field(repr=False)
+    model: str
+    timeout: float
+
+
+def load_visual_config() -> VisualConfig:
+    """Require environment-only visual settings without choosing a model or contacting it."""
+    values = {}
+    for name in ("SKYNET_BASE_URL", "SKYNET_API_KEY", "VISUAL_INSPECTION_MODEL",
+                 "VISUAL_INSPECTION_TIMEOUT_SECONDS"):
+        value = os.environ.get(name, "").strip()
+        if not value:
+            raise ValueError(f"{name} is required for visual inspection.")
+        values[name] = value
+    try:
+        url = urlsplit(values["SKYNET_BASE_URL"])
+        valid_url = url.scheme in ("http", "https") and bool(url.hostname)
+    except ValueError:
+        valid_url = False
+    if not valid_url:
+        raise ValueError("SKYNET_BASE_URL must be an absolute HTTP(S) URL.")
+    try:
+        timeout = float(values["VISUAL_INSPECTION_TIMEOUT_SECONDS"])
+    except ValueError:
+        timeout = float("nan")
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("VISUAL_INSPECTION_TIMEOUT_SECONDS must be positive and finite.")
+    return VisualConfig(values["SKYNET_BASE_URL"], values["SKYNET_API_KEY"],
+                        values["VISUAL_INSPECTION_MODEL"], timeout)
 
 
 def load_document_config() -> DocumentConfig:

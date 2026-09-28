@@ -155,12 +155,14 @@ with patch.object(crops, "crop_png", side_effect=AssertionError("must reuse pers
                 self.render(size=100)
         self.assertEqual(slot.read_bytes(), original)
         with mock.patch.object(crops.os, "replace", side_effect=OSError("replace failed")):
-            with self.assertRaisesRegex(OSError, "replace failed"):
+            with self.assertRaises(crops.ImagePersistenceError) as error:
                 self.render(size=100)
+            self.assertEqual(str(error.exception.__cause__), "replace failed")
         self.assertEqual(slot.read_bytes(), original)
         with mock.patch.object(crops.os, "fsync", side_effect=OSError("write failed")):
-            with self.assertRaisesRegex(OSError, "write failed"):
+            with self.assertRaises(crops.ImagePersistenceError) as error:
                 self.render(size=100)
+            self.assertEqual(str(error.exception.__cause__), "write failed")
         self.assertEqual(slot.read_bytes(), original)
         self.assertEqual(list(self.run_dir.rglob("*.tmp")), [])
         with mock.patch.object(crops, "crop_png", side_effect=AssertionError("cache should survive")):

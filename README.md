@@ -37,8 +37,9 @@ the consuming agent decides what to read and how to use it.
    total matching paragraphs, source pages, section IDs/titles and snippets.
 5. `list_assets(kind=None, first_page=None, last_page=None, cursor=None)` â€” paginated numbered items,
    including references, with canonical IDs and source bounds.
-6. `get_asset(asset_id, include_image=False)` â€” repeatable full extracted content and citations for an exact asset,
-   optionally with a precise crop or full-page PNG when imagery is enabled. No asset/image consumption quotas.
+6. `get_asset(asset_id, question=None)` - full extracted content and citations for an exact asset or page.
+   An explicit non-blank question requests one fresh visual inspection of its precise crop/full-page PNG.
+   Learned output is separate from deterministic extraction. No asset/image consumption quotas.
 
 Canonical IDs include segment identity, such as `segment:2/figure:1`, and keep the original printed `label`
 separate. Use catalog IDs unchanged: short IDs such as `figure:1` are rejected. Retrieval returns `document_id`,
@@ -48,9 +49,11 @@ separate. Use catalog IDs unchanged: short IDs such as `figure:1` are rejected. 
 `page:N` selects the one-based physical PDF page, including its stored text (possibly empty) and full visible
 page. Missing text does not prevent rendering. Leading zeros, invalid IDs and pages outside the PDF are errors.
 `region_available` reports coordinate presence; `visual_available` reports validated geometry.
-`images_enabled` reports configuration; `image_status` is `not_requested`, `disabled`, `unavailable` or `attached`.
-Only explicit `include_image=True` with `images.enabled=true` can render or retrieve a PNG; otherwise there is
-no rendering, PNG creation or decoded image-cache lookup. Requested images arrive as actual MCP `ImageContent`.
+Without a question (or with `question=null`), the server returns deterministic content and
+`visual.status="not_requested"`: zero model calls, no visual credentials loaded, no rendering,
+PNG creation or decoded image-cache lookup. Blank/non-string questions are rejected before rendering.
+With a question, the existing PNG is rendered/reused and sent to one non-streaming Chat Completions request.
+The result remains MCP text only; image bytes are internal. `include_image` and `images.enabled` are retired.
 
 `render` records requested/effective bounds, coordinate system, page geometry, clipping and availability/reason.
 Bounds use `pymupdf_unrotated_visible_page_points`: points from the visible page's top-left, x right and y down,
@@ -61,18 +64,19 @@ Non-finite source coordinates are represented as strings to keep metadata valid 
 non-finite or fully outside regions return an unavailable reason and preserve text; no replacement crop is chosen.
 
 `first_page`/`last_page` and `source_page_ids` preserve the complete source span. `rendered_pages` is empty when
-no image is attached; `visual_coverage` is then `none`. A multipage numbered asset renders only its existing
+no image was prepared for inspection; `visual_coverage` is then `none`. A multipage numbered asset renders only its existing
 first-page region, declares `partial` coverage and gives page IDs for explicit follow-up. Clipped images also
 declare partial coverage; otherwise coverage is `single_page`. `limitations` explains these cases. There is no
-stitching or region inference. Visual questions/model calls remain future MCP-09 work.
-Overview does not reset consumption state; stale counters have no effect. Access remains repeatable.
+stitching or region inference. These exact coverage fields and limitations reach both the model prompt and
+`visual` result. A prepared image does not establish a successful observation; check `visual.status`.
+Overview does not reset consumption state; stale counters have no effect. Deterministic access remains repeatable.
 
 Requested deterministic PNGs are created lazily under `PDF_INGESTION_RUN_DIR/images/<document fingerprint>/`.
 Each asset has one internal PNG filename with embedded JSON metadata. Reuse requires the existing full document
 fingerprint, asset/page identity, requested/effective bounds, rotation/page boxes, render size, RGB/alpha settings,
 PyMuPDF version and renderer-format version to match. The PNG container, compressed data and pixels must validate.
-Repeated requests and reopening/restarting with the same valid run directory reuse the image while still returning
-MCP `ImageContent` and current source provenance. Different documents and runs remain isolated. Absolute cache
+Repeated requests and reopening/restarting with the same valid run directory reuse the image with current source provenance.
+Each visual question makes a new inspection with a new diagnostic ID, even when the PNG is reused. Different documents and runs remain isolated. Absolute cache
 paths are never tool output. Text-only requests and catalog listing create no image files or cache lookups.
 
 PNG pixels and metadata are replaced together using a temporary file in the destination directory, fsync and an
@@ -80,6 +84,37 @@ atomic replacement. Per-asset locks coalesce concurrent threads without holding 
 may render redundantly but cannot expose a partially written entry. Incomplete/corrupt/mismatched entries are cache
 misses; render/write failures are reported and preserve a previous valid PNG. Each asset retains only the latest
 successful render settings. There is no answer cache, cache database or new document hashing scheme.
+
+### Visual results and diagnostics
+
+`visual` contains `status`, an `answer` only on success (otherwise a `reason`), source page IDs,
+rendered pages, coverage, bounds and limitations. Model output never replaces extracted `content`.
+A missing/invalid region returns `unavailable` with zero model calls; explicitly request one of
+`source_page_ids` to inspect a full page. Invalid IDs remain MCP tool errors. Other failures are distinct:
+`render_error`, `image_persistence_error`, `configuration_error`, `timeout`, `model_error`,
+`empty`, `truncated`, `refused`, `invalid_response` or diagnostic `persistence_error`.
+No failure fabricates an observation or triggers a fallback. Missing text and zero search hits do not
+establish absence from the paper. The helper asks for visible local evidence and explicit uncertainty,
+never proportional dimension estimates, invented materials or whole-antenna conclusions.
+Captions, extracted text and image text are source data, not instructions.
+
+`inspection_id` resolves locally to `PDF_INGESTION_RUN_DIR/inspections/<inspection_id>.json`.
+Each helper invocation publishes one unique record atomically (temporary file, fsync, replacement).
+It includes question, system prompt/source context, run-relative PNG reference, render metadata,
+non-secret settings/model, received response, optional usage, duration and outcome. Image base64 and
+credentials are omitted/redacted. Endpoint settings record only scheme/host, never URL credentials or queries.
+Received responses are saved with outcome `received` before answer validation, then the same record is updated
+with its final outcome. A process interruption can leave that intermediate record for diagnosis.
+Empty/truncated/refused/tool-call outputs remain diagnostics only. Transport failures have no completion payload.
+Required diagnostic write failure returns neither success nor an inspection ID; a previously saved intermediate
+record may remain locally. Cancellation propagates and attempts to save a cancelled outcome.
+
+Visual requests serialize within the server process across simultaneous calls and event loops. Cancellation
+and failures release the gate. Rendering/file work runs off the event loop; SQLite locks are not held across
+network awaits. The client is closed after each invocation. There are no tools, retries, fallback models,
+Agents SDK, second completions or answer caching. `get_asset` therefore claims neither read-only nor idempotent
+behavior; the other five tools retain their annotations. Validation so far uses synthetic PDFs and fake clients;
+real endpoint and consumer integration remain unverified and require separate owner authorization.
 
 The catalog returns up to `ASSET_PAGE_SIZE = 20` items per call, ordered by stored sequence, then segment and
 stored ID as a unique tie-breaker. Defaults cover the whole PDF and all numbered kinds: `figure`, `table`,
@@ -146,8 +181,8 @@ retain its range, while conflicting query/bounds are errors. Cursors are opaque 
 limited to 4,096 characters, and bound to document identity and operation. They can be replayed unchanged;
 legacy page-number cursors are rejected. No cursor signing or server-side cursor state is used.
 Zero matches return `total_hits: 0`, an empty `hits` list and null continuation; they do not establish scientific
-absence. Text and asset tools invoke no model. OCR and visual questions remain
-future work. External Agents SDK verification is deferred.
+absence. Text tools and question-free assets invoke no model. Full-document OCR remains future work;
+external consumer integration is deferred.
 
 ## Environment
 
@@ -156,10 +191,22 @@ future work. External Agents SDK verification is deferred.
 * `PDF_INGESTION_RUN_DIR` â€” isolated run directory for derived data; required, may not exist yet (persistence creates
   it on demand) and must not point to an existing file.
 * `REVIEWER_CONFIG` â€” JSON file overriding values of `config.json`: layout factors (`heuristics`), image
-  attachments (`images`: `enabled`, `max_side`). Remove obsolete `images.budget` and `replies.asset_budget`
-  overrides; the former is rejected by existing strict settings validation. There are no consumption quotas.
+  rendering (`images`: `max_side`). Remove obsolete `images.enabled`, `images.budget` and
+  `replies.asset_budget` overrides; unknown image settings are rejected when rendering is requested.
+  A question is the only visual trigger; there is no second enable switch or consumption quota.
 * `REVIEWER_SCRATCH_BASE` â€” legacy store base (default `/tmp/reviewer`) used only when a store is opened without an
   explicit run directory (internal extractor tests); the server always uses its bound run directory.
+
+The following environment settings are required **only for an explicit visual inspection**. Startup,
+text tools and question-free assets work without them. No dotenv loader or default model is supplied:
+
+* `SKYNET_BASE_URL` — absolute HTTP(S) URL of the OpenAI-compatible service.
+* `SKYNET_API_KEY` — service credential, never included in diagnostics.
+* `VISUAL_INSPECTION_MODEL` — host-selected model identifier; no fallback.
+* `VISUAL_INSPECTION_TIMEOUT_SECONDS` — required positive finite seconds, passed explicitly to the client/request.
+
+The async OpenAI SDK uses `max_retries=0`. Missing or invalid settings produce a diagnostic
+`configuration_error` without initializing a client or sending a request.
 
 ## Development
 

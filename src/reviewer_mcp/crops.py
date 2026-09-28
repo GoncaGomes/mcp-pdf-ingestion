@@ -32,10 +32,20 @@ _LOCKS: dict[Path, Any] = {}
 _LOCKS_GUARD = threading.Lock()
 
 
-def settings() -> dict[str, int | bool]:
-    """The images settings: enabled and max_side (pixels), read on every call."""
+class ImagePersistenceError(OSError):
+    """The rendered PNG could not be published to the required cache."""
+
+
+def settings() -> dict[str, int]:
+    """The images max_side setting (pixels), read only when rendering is requested."""
     values = load_section("images")
-    return {"enabled": bool(values["enabled"]), "max_side": int(values["max_side"])}
+    return {"max_side": int(values["max_side"])}
+
+
+def image_reference(document_id: str, asset_id: str) -> str:
+    """Run-relative cache reference shared by persistence and inspection diagnostics."""
+    key = asset_id.replace(":", "-").replace("/", "__") + ".png"
+    return f"images/{document_id}/{key}"
 
 
 def _region(page: Any, bbox: Bounds | None) -> dict[str, Any]:
@@ -78,8 +88,11 @@ def _page(doc: Any, page: int) -> Any:
 
 def describe_region(pdf: Path, page: int, bbox: Bounds | None) -> dict[str, Any]:
     """Inspect geometry without rendering or decoding an image. None selects a full page."""
-    with fitz.open(str(pdf)) as doc:
-        return _region(_page(doc, page), bbox)
+    try:
+        with fitz.open(str(pdf)) as doc:
+            return _region(_page(doc, page), bbox)
+    except FzErrorBase as error:
+        raise RuntimeError("PDF image geometry could not be read.") from error
 
 
 def crop_png(pdf: Path, page: int, bbox: Bounds | None, max_side: int) -> bytes:
@@ -185,8 +198,7 @@ def cached_png(
         raise ValueError("Invalid asset identity for image persistence.")
     if type(max_side) is not int or max_side <= 0:
         raise ValueError("max_side must be a positive integer.")
-    key = asset_id.replace(":", "-").replace("/", "__") + ".png"
-    path = run_dir / "images" / document_id / key
+    path = run_dir / image_reference(document_id, asset_id)
     expected = {
         "renderer_version": RENDERER_VERSION, "pymupdf_version": str(fitz.VersionBind),
         "document_id": document_id, "asset_id": asset_id, "page": page,
@@ -211,6 +223,9 @@ def cached_png(
         chunk = b"tEXt" + payload
         record = struct.pack(">I", len(payload)) + chunk + struct.pack(">I", zlib.crc32(chunk))
         data = data[:-12] + record + data[-12:]  # Insert before IEND.
-        path.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_png(path, data)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_png(path, data)
+        except OSError as error:
+            raise ImagePersistenceError("Required PNG persistence failed.") from error
         return data

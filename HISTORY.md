@@ -458,3 +458,51 @@ Existing CPython 3.14.3 environment reused without changes. Multipage images sti
 cover only their first stored region; processes may redundantly render concurrently.
 No external corpus/integration/model validation claimed. No Git state was mutated.
 Next: owner review/acceptance; stopped after MCP-08B. Earlier task status unchanged.
+
+## MCP-09A - single-call visual helper (2026-09-28; review_pending)
+
+Added lazy environment-only visual configuration, one non-streaming AsyncOpenAI
+completion with timeout/max_retries=0, and atomic run-local JSON diagnostics saved
+before answer validation. Empty, truncated, refused, tool-call and API/timeout
+failures cannot return observations; required persistence failure cannot return an ID.
+Diagnostics omit credentials and image bytes. uv added openai 3.19.2 (>=3.6.0,<4),
+jiter 0.17.0 and sniffio 1.3.1 without upgrading existing locked dependencies;
+SDK constructor/create/close signatures were inspected locally.
+Focused checks: helper 6 OK, configuration 12 OK; focused Ruff and full
+Basedpyright/Vulture/diff clean after correcting two test closure lint findings.
+All model tests use fake clients, not a real endpoint. Existing venv reused.
+Batch proceeds to MCP-09B; owner acceptance of earlier tasks is unchanged.
+
+## MCP-09B - explicit get_asset questions (2026-09-28; review_pending)
+
+Final async signature is get_asset(asset_id, question=None), with text-only MCP results,
+unchanged extraction and a separate visual result. Removed include_image/images.enabled;
+retained max_side and the existing crop/cache format. Added a shared cache reference
+helper and typed PNG persistence error; no extraction heuristics or SQLite redesign.
+Source span, clipped/first-page coverage, exact selected PNG and limitations reach the
+prompt and result. Missing regions never fall back. Visual questions make fresh
+inspections even when reusing a PNG. get_asset annotations reflect inference/writes;
+the other five tools retain their contracts. Rendering/file work is offloaded, model
+requests serialize across event loops, and cancellation/failure releases synchronization.
+Received-response persistence is protected against a cancellation/write race.
+
+Focused checks: server 24 OK; helper expanded from 6 to 10 OK (including cancellation,
+concurrent loops, atomic-write failure and installed SDK with mocked HTTP transport);
+crops 11 OK after adapting its expected error to the new typed persistence failure
+while retaining original-cause and previous-output checks. One test closure lint finding
+was corrected. README/PLAN/AGENTS and TODO document the final behavior and check schedule.
+
+Final batch checks, each run once with environment-local executables:
+- `.venv/Scripts/python.exe -m unittest discover -s tests -p 'test_*.py' -q`: 121 run,
+  115 passed, 1 failure, 5 skips (exit 1); log `tmp/mcp-09-unittest.log`.
+- Only failure: known Windows `test_store_location_permissions_and_cache` chmod
+  assertion, 511 != 448. Five real-corpus tests skipped without validation PDFs.
+- `.venv/Scripts/ruff.exe check .`, `.venv/Scripts/basedpyright.exe`,
+  `.venv/Scripts/vulture.exe`, `git diff --check`: exit 0, clean.
+
+Existing CPython 3.14.3 venv reused; no separate Python 3.12 validation. All visual
+validation was synthetic/fake-client or mocked HTTP, with no real endpoint or consumer
+integration. No existing locked dependency changed version. Both tasks await owner
+acceptance; no earlier acceptance inferred, no Git mutation, and no MCP-10 work.
+The diff check was also repeated successfully after recording the final documentation.
+Next: owner review; suggested owner commits remain in PLAN. Stopped after MCP-09B.

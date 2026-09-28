@@ -503,6 +503,15 @@ wrong image; separate runs are independent; failed write leaves no valid cache h
 **Suggested owner commit after acceptance:**
 `feat(rendering): reuse images within each run`
 
+### Authorized MCP-09 batch (2026-09-28)
+
+MCP-09A then MCP-09B are authorized sequentially without intermediate approval.
+Run helper/configuration tests and relevant static checks after MCP-09A; proceed only
+when they pass. Run full unittest, Ruff, Basedpyright, Vulture and diff checks once
+after MCP-09B. Fake clients only; no endpoint probes, consumer work or Git mutations.
+MCP-09B replaces both include_image and images.enabled with the explicit question
+trigger; images.max_side remains. The other five tools keep their contracts.
+
 ### MCP-09A - Add one-call visual inspection with diagnostics
 
 **Files:** new `visual_inspection.py`, `config.py`, minimal persistence helper;
@@ -539,6 +548,16 @@ source/render coverage and inspection ID. Missing imagery means no inference.
 Update `_agent_errors` for awaited exceptions if used on async functions. Ensure
 visual calls serialize even if a client submits simultaneous requests; do not hold
 the SQLite lock across a network await. Do not mark this mixed tool idempotent.
+
+**Implementation note (2026-09-28):** the final tool is async and returns MCP text only.
+Remove images.enabled along with include_image; retain images.max_side. Reuse cached_png
+and its cache slot/metadata, with a typed image persistence error to distinguish write
+failure from render failure. Offload store/render/file work; finish store reads before
+network awaits. A process-wide nonblocking threading gate spans client lifetime and is
+independent of event-loop lifetime; cancellation releases it. Diagnostics use unique
+UUID names under run_dir/inspections and contain references rather than image bytes.
+An interrupted inspection may leave a received record; required write failure returns
+neither success nor an ID. A reused PNG always leads to a fresh model request/record.
 
 **Verify:** actual MCP invocation with a fake model; zero versus one model request;
 full-page question; partial crop warning; missing crop; async failure; sequential
