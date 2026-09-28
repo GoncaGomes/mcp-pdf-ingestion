@@ -35,22 +35,22 @@ files, caches and extraction are handled internally.
 - read_pages: repeatable page-labelled text; continue with next_cursor until null.
 - read_section: an outline section by ID, with complete continuation and page provenance.
 - search_paper: paginated textual matches with pages, section IDs and snippets.
-- list_assets: paginated numbered assets across the PDF, with canonical segment IDs and overlap filters.
-- get_asset: repeatable exact asset content and citations; optional crops when images are enabled.
+- list_assets: paginated numbered assets by default; kind=page selects physical pages, with range filters.
+- get_asset: repeatable exact content and citations or page text; optional cached PNGs when images are enabled.
 """
 
 # Reply budgets, not layout heuristics.
 MENTION_ITEMS = 12
 MENTION_CONTEXT = 100
 CAPTION_PREVIEW = 140
-ASSET_PAGE_SIZE = 20  # numbered assets per catalog response
+ASSET_PAGE_SIZE = 20  # assets per catalog response
 
 mcp = FastMCP("reviewer", instructions=INSTRUCTIONS)
 
 # The document bound to this process: set once at startup (main) or once per in-process test; never reread.
 _DOCUMENT: DocumentConfig | None = None
 
-AssetKind = Literal["figure", "table", "equation", "algorithm", "listing", "statement", "reference"]
+AssetKind = Literal["figure", "table", "equation", "algorithm", "listing", "statement", "reference", "page"]
 
 
 def bind_document() -> DocumentConfig:
@@ -163,11 +163,18 @@ def _asset_entry(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _page_entry(page: int) -> dict[str, Any]:
+    return {
+        "id": f"page:{page}", "label": f"Page {page}", "kind": "page",
+        "first_page": page, "last_page": page, "region_available": True,
+    }
+
+
 @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
 @_agent_errors
 def list_assets(
     kind: Annotated[
-        AssetKind | None, Field(description="Only this numbered kind; omit for all, including references.")
+        AssetKind | None, Field(description="Numbered kind, or page for full pages; omit for numbered assets.")
     ] = None,
     first_page: Annotated[int | None, Field(ge=1, description="First PDF page; alone selects one page.")] = None,
     last_page: Annotated[int | None, Field(ge=1, description="Last PDF page; alone starts at page 1.")] = None,
@@ -175,9 +182,9 @@ def list_assets(
         str | None, Field(max_length=reading.CURSOR_LIMIT, description="Opaque next_cursor; pass unchanged.")
     ] = None,
 ) -> dict[str, Any]:
-    """List up to 20 numbered assets with canonical IDs, source spans, caption previews and citation counts.
-    Defaults to the whole PDF, including references; ranges select overlapping assets. Counts cover the full
-    filtered result. Continue with next_cursor until null. Region availability does not imply crop quality."""
+    """List up to 20 assets with IDs and source spans. Default: numbered assets including references; page selects
+    only full pages in ascending order. Inclusive ranges select overlap. Counts cover the full filtered result.
+    Continue with next_cursor until null. Catalogs never render images or include full text."""
     _, store = _open()
     document_id = store.meta()["fingerprint"]
     offset = 0
@@ -194,11 +201,14 @@ def list_assets(
         first, last = reading.page_range(store.page_count, first_page, last_page)
     if kind is not None and kind not in get_args(AssetKind):
         raise ReviewError(f"Invalid kind; use one of {get_args(AssetKind)} or omit it for all numbered assets.")
-    counts = store.asset_counts(kind, first, last)
+    counts = {"page": last - first + 1} if kind == "page" else store.asset_counts(kind, first, last)
     total = sum(counts.values())
     if cursor is not None and offset >= total:
         raise ReviewError("Invalid cursor result position; restart without a cursor.")
-    shown = store.assets(kind, first, last, limit=ASSET_PAGE_SIZE, offset=offset)
+    if kind == "page":
+        shown = [_page_entry(page) for page in range(first + offset, min(last + 1, first + offset + ASSET_PAGE_SIZE))]
+    else:
+        shown = [_asset_entry(item) for item in store.assets(kind, first, last, limit=ASSET_PAGE_SIZE, offset=offset)]
     next_cursor = None
     if offset + len(shown) < total:
         next_cursor = reading._encode_cursor(
@@ -213,7 +223,7 @@ def list_assets(
         )
     return {
         "document_id": document_id,
-        "items": [_asset_entry(item) for item in shown],
+        "items": shown,
         "total_assets": total,
         "counts": counts,
         "next_cursor": next_cursor,
@@ -224,19 +234,31 @@ def list_assets(
 @_agent_errors
 def get_asset(
     asset_id: Annotated[
-        str, Field(max_length=512, description="Canonical ID from list_assets, e.g. segment:2/figure:1.")
+        str, Field(max_length=512, description="Canonical ID: segment:2/figure:1 or page:4 (physical PDF page).")
     ],
     include_image: Annotated[
-        bool, Field(description="Attach the existing crop if enabled and a region is available.")
+        bool, Field(description="Attach a PNG of the selected region or full page when images are enabled.")
     ] = False,
 ) -> list[Any]:
-    """Retrieve an exact numbered asset and its citations throughout the PDF. Returns full extracted content,
-    source bounds, method/confidence and visual availability. Requests are repeatable and have no consumption quota.
-    Optional images use the existing crop renderer; no visual model is invoked."""
+    """Retrieve exact asset content/citations or a page's stored text, with source bounds and visual availability.
+    Optional PNGs report clipping and actual rendered coverage; multipage assets render only their first region.
+    Repeatable, without consumption quotas or model calls."""
+    page_match = re.fullmatch(r"page:([1-9][0-9]{0,17})", asset_id)
     match = re.fullmatch(r"segment:(0|[1-9][0-9]{0,17})/([a-z]+:[A-Za-z0-9.]+)", asset_id)
-    if match is None:
-        raise ReviewError("Invalid asset_id: use a canonical ID from list_assets, e.g. segment:2/figure:1.")
+    if match is None and page_match is None:
+        raise ReviewError("Invalid asset_id: use list_assets IDs, e.g. segment:2/figure:1 or page:4.")
     pdf, store = _open()
+    if page_match is not None:
+        page = int(page_match[1])
+        reading.page_range(store.page_count, page, page)
+        stored_page = store.pages(page, page)[0]
+        detail = {
+            **_page_entry(page), "document_id": store.meta()["fingerprint"],
+            "content": stored_page["text"], "format": "text", "method": "page_text",
+            "text_source": stored_page["source"], "page_label": stored_page["label"],
+        }
+        return _asset_response(pdf, detail, None, include_image)
+    assert match is not None
     found = store.asset(int(match[1]), match[2])
     if found is None:
         raise ReviewError(f"Unknown asset_id {asset_id!r}; call list_assets for valid IDs in this document.")
@@ -268,22 +290,55 @@ def get_asset(
         "cited_count": len(mentions),
         "cited_by": cited_by,
     }
+    bbox = (found["x0"], found["y0"], found["x1"], found["y1"]) if _region_available(found) else None
+    detail["region_available"] = _region_available(found)
+    return _asset_response(pdf, detail, bbox, include_image)
+
+
+def _asset_response(
+    pdf: Path, detail: dict[str, Any], bbox: crops.Bounds | None, include_image: bool,
+) -> list[Any]:
     image: Image | None = None
     images = crops.settings()
-    detail["region_available"] = _region_available(found)
     detail["images_enabled"] = images["enabled"]
+    first, last = detail["first_page"], detail["last_page"]
+    detail["source_page_ids"] = [f"page:{page}" for page in range(first, last + 1)]
+    detail["rendered_pages"] = []
+    detail["visual_coverage"] = "none"
+    detail["limitations"] = (
+        ["Only the first-page region is available for this multipage asset."] if last > first else []
+    )
+    if detail["region_available"]:
+        region = crops.describe_region(pdf, first, bbox)
+    else:
+        region = {
+            "available": False, "reason": "No stored region is available.",
+            "coordinate_system": crops.COORDINATE_SYSTEM,
+            "requested_bounds": None, "effective_bounds": None, "clipped": False,
+        }
+    detail["render"] = region
+    detail["visual_available"] = region["available"]
+    if region["clipped"]:
+        detail["limitations"].append("The region was clipped to the visible page.")
     if not include_image:
         detail["image_status"] = "not_requested"
-    elif not detail["region_available"]:
-        detail["image_status"] = "missing_region"
     elif not images["enabled"]:
         detail["image_status"] = "disabled"
+    elif not region["available"]:
+        detail["image_status"] = "unavailable"
     else:
-        bbox = (found["x0"], found["y0"], found["x1"], found["y1"])
-        image = Image(data=crops.crop_png(pdf, found["page"], bbox, int(images["max_side"])), format="png")
+        assert _DOCUMENT is not None
+        try:
+            data = crops.cached_png(
+                pdf, first, bbox, int(images["max_side"]), run_dir=_DOCUMENT.run_dir,
+                document_id=detail["document_id"], asset_id=detail["id"], region=region,
+            )
+        except (OSError, RuntimeError) as error:
+            raise ReviewError("Image rendering or persistence failed; no image was attached.") from error
+        image = Image(data=data, format="png")
         detail["image_status"] = "attached"
-        detail["rendered_pages"] = [found["page"]]
-        detail["visual_coverage"] = "partial" if found["last_page"] > found["page"] else "single_page"
+        detail["rendered_pages"] = [first]
+        detail["visual_coverage"] = "partial" if last > first or region["clipped"] else "single_page"
     text = TextContent(type="text", text=json.dumps(detail, ensure_ascii=False))
     return [text, image] if image is not None else [text]
 

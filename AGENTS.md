@@ -31,7 +31,8 @@ removing reviewer-only features.
 | `reading.py` | Deterministic text reads/search, range validation and opaque continuation cursors. |
 | `store.py` (`PaperStore`) | SQLite queries, cache and persisted state. |
 | `document.py`, `indexes.py`, `structure.py` | Extraction, indexes and document segments. |
-| `assets.py`, `crops.py` | Asset detection/metadata and image rendering. |
+| `assets.py` | Asset detection and extraction metadata. |
+| `crops.py` | Crop/full-page geometry, rendering, and lazy atomic PNG persistence/reuse under the bound run directory. |
 | `config.py`, `runner.py` | Settings (document configuration, section values) and process execution. |
 | `tests/pdf_fixtures.py`, `tests/` | Synthetic PDFs and unittest coverage. |
 | Root `pyproject.toml` | Dependencies, package settings and entry point. |

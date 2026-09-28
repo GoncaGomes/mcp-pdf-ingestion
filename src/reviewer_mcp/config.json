@@ -84,7 +84,7 @@
   "images": {
     "enabled": {
       "value": false,
-      "description": "Attach a cropped image of a numbered item when get_asset asks for one. Off while Goose drops images for custom providers (aaif-goose/goose#11998); turn on once the agent receives them."
+      "description": "Allow optional PNG attachments for numbered regions and full-page assets when get_asset requests an image."
     },
     "max_side": {
       "value": 1280,

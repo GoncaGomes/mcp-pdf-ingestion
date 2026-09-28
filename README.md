@@ -38,23 +38,54 @@ the consuming agent decides what to read and how to use it.
 5. `list_assets(kind=None, first_page=None, last_page=None, cursor=None)` — paginated numbered items,
    including references, with canonical IDs and source bounds.
 6. `get_asset(asset_id, include_image=False)` — repeatable full extracted content and citations for an exact asset,
-   optionally with the existing crop when imagery is enabled. No asset/image consumption quotas.
+   optionally with a precise crop or full-page PNG when imagery is enabled. No asset/image consumption quotas.
 
 Canonical IDs include segment identity, such as `segment:2/figure:1`, and keep the original printed `label`
 separate. Use catalog IDs unchanged: short IDs such as `figure:1` are rejected. Retrieval returns `document_id`,
 `id`, `label`, `kind`, numeric `first_page`/`last_page`, `caption`, `content`, `format`, `method`, `confidence`,
 `cited_count` and up to 12 `cited_by` contexts. Duplicate labels in different segments remain distinct.
 
-`region_available` reports stored coordinates, not crop quality. `images_enabled` reports configuration;
-`image_status` is `not_requested`, `missing_region`, `disabled` or `attached`. An image is rendered only when
-explicitly requested, enabled and a region exists. The existing renderer is unchanged: a multipage asset's image
-covers its first page only (`rendered_pages` and `visual_coverage` report this). No full-page assets, image cache
-or visual model/questions are implemented yet. Overview no longer resets any consumption state; stale persisted
-counters have no effect. Text and asset access are repeatable and independent of overview calls.
+`page:N` selects the one-based physical PDF page, including its stored text (possibly empty) and full visible
+page. Missing text does not prevent rendering. Leading zeros, invalid IDs and pages outside the PDF are errors.
+`region_available` reports coordinate presence; `visual_available` reports validated geometry.
+`images_enabled` reports configuration; `image_status` is `not_requested`, `disabled`, `unavailable` or `attached`.
+Only explicit `include_image=True` with `images.enabled=true` can render or retrieve a PNG; otherwise there is
+no rendering, PNG creation or decoded image-cache lookup. Requested images arrive as actual MCP `ImageContent`.
+
+`render` records requested/effective bounds, coordinate system, page geometry, clipping and availability/reason.
+Bounds use `pymupdf_unrotated_visible_page_points`: points from the visible page's top-left, x right and y down,
+before rotation, matching stored PyMuPDF extraction bounds. They are not raw MediaBox coordinates. The renderer
+intersects in unrotated space, then rotates the clip into displayed orientation. Full-page images use the visible
+CropBox, including rotation. `images.max_side` controls the longest image side in pixels and must be positive.
+Non-finite source coordinates are represented as strings to keep metadata valid JSON. Missing, inverted,
+non-finite or fully outside regions return an unavailable reason and preserve text; no replacement crop is chosen.
+
+`first_page`/`last_page` and `source_page_ids` preserve the complete source span. `rendered_pages` is empty when
+no image is attached; `visual_coverage` is then `none`. A multipage numbered asset renders only its existing
+first-page region, declares `partial` coverage and gives page IDs for explicit follow-up. Clipped images also
+declare partial coverage; otherwise coverage is `single_page`. `limitations` explains these cases. There is no
+stitching or region inference. Visual questions/model calls remain future MCP-09 work.
+Overview does not reset consumption state; stale counters have no effect. Access remains repeatable.
+
+Requested deterministic PNGs are created lazily under `PDF_INGESTION_RUN_DIR/images/<document fingerprint>/`.
+Each asset has one internal PNG filename with embedded JSON metadata. Reuse requires the existing full document
+fingerprint, asset/page identity, requested/effective bounds, rotation/page boxes, render size, RGB/alpha settings,
+PyMuPDF version and renderer-format version to match. The PNG container, compressed data and pixels must validate.
+Repeated requests and reopening/restarting with the same valid run directory reuse the image while still returning
+MCP `ImageContent` and current source provenance. Different documents and runs remain isolated. Absolute cache
+paths are never tool output. Text-only requests and catalog listing create no image files or cache lookups.
+
+PNG pixels and metadata are replaced together using a temporary file in the destination directory, fsync and an
+atomic replacement. Per-asset locks coalesce concurrent threads without holding SQLite locks. Concurrent processes
+may render redundantly but cannot expose a partially written entry. Incomplete/corrupt/mismatched entries are cache
+misses; render/write failures are reported and preserve a previous valid PNG. Each asset retains only the latest
+successful render settings. There is no answer cache, cache database or new document hashing scheme.
 
 The catalog returns up to `ASSET_PAGE_SIZE = 20` items per call, ordered by stored sequence, then segment and
 stored ID as a unique tie-breaker. Defaults cover the whole PDF and all numbered kinds: `figure`, `table`,
-`equation`, `algorithm`, `listing`, `statement`, `reference`. Full-page assets and `kind="page"` await MCP-08.
+`equation`, `algorithm`, `listing`, `statement`, `reference`. Explicit `kind="page"` selects only full-page assets
+in ascending physical-page order, with the same inclusive range defaults and cursor validation. Page catalog
+entries derive from page count/range, omit full text and never render images; pages are excluded by default.
 
 ```json
 {"document_id":"<fingerprint>","items":[{"id":"segment:2/figure:1","label":"Fig. 1","kind":"figure",
@@ -115,8 +146,8 @@ retain its range, while conflicting query/bounds are errors. Cursors are opaque 
 limited to 4,096 characters, and bound to document identity and operation. They can be replayed unchanged;
 legacy page-number cursors are rejected. No cursor signing or server-side cursor state is used.
 Zero matches return `total_hits: 0`, an empty `hits` list and null continuation; they do not establish scientific
-absence. Text and asset tools invoke no model. OCR, visual questions and rendering
-improvements remain future work. External Agents SDK verification is deferred.
+absence. Text and asset tools invoke no model. OCR and visual questions remain
+future work. External Agents SDK verification is deferred.
 
 ## Environment
 

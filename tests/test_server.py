@@ -87,7 +87,7 @@ class TestContract(ServerCase):
             self.assertEqual(set(tools[name].input_schema["properties"]), parameters)
             self.assertGreaterEqual(tools[name].input_schema["properties"]["cursor"]["anyOf"][0]["maxLength"], 4096)
         self.assertEqual(set(tools["get_asset"].input_schema["properties"]), {"asset_id", "include_image"})
-        self.assertNotIn("page", json.dumps(tools["list_assets"].input_schema["properties"]["kind"]))
+        self.assertIn("page", json.dumps(tools["list_assets"].input_schema["properties"]["kind"]))
         for tool in tools.values():
             self.assertTrue(tool.description, tool.name)
             self.assertNotIn("paper", tool.input_schema["properties"], tool.name)
@@ -305,7 +305,7 @@ class TestAssets(ServerCase):
         self.bind_paper("ieee_single")
         for asset_id in (
             "figure:1",
-            "page:1",
+            "page:01",
             "segment:02/figure:1",
             "segment:-1/figure:1",
             "segment:2/figure:",
@@ -366,7 +366,8 @@ class TestAssets(ServerCase):
             with mock.patch.object(server.crops, "crop_png") as crop:
                 missing = json.loads(server.get_asset(asset_id, include_image=True)[0].text)
                 self.assertFalse(missing["region_available"])
-                self.assertEqual(missing["image_status"], "missing_region")
+                self.assertEqual(missing["image_status"], "unavailable")
+                self.assertIn("No stored region", missing["render"]["reason"])
                 crop.assert_not_called()
 
     def test_duplicate_ids_resolve_exact_segment_and_mentions(self):
@@ -399,6 +400,29 @@ class TestAssets(ServerCase):
 
 
 class TestCatalog(ServerCase):
+    def test_page_catalog_is_lazy_paginated_and_filtered(self):
+        self.bind_paper("ieee_single")
+        with mock.patch.object(server.crops, "crop_png") as crop, \
+                mock.patch.object(server.crops, "describe_region") as describe, \
+                mock.patch.object(server, "ASSET_PAGE_SIZE", 3):
+            items = self.catalog(kind="page")
+            self.assertEqual([item["id"] for item in items], [f"page:{p}" for p in range(1, 18)])
+            self.assertTrue(all("content" not in item and "text" not in item for item in items))
+            self.assertEqual(server.list_assets(kind="page")["counts"], {"page": 17})
+            self.assertFalse(any(i["kind"] == "page" for i in self.catalog()))
+            for args, expected in (({"first_page": 5}, [5]), ({"last_page": 4}, [1, 2, 3, 4]),
+                                   ({"first_page": 4, "last_page": 8}, list(range(4, 9)))):
+                self.assertEqual([i["first_page"] for i in self.catalog(kind="page", **args)], expected)
+            cursor = server.list_assets(kind="page")["next_cursor"]
+            self.assertEqual(server.list_assets(cursor=cursor), server.list_assets(cursor=cursor, kind="page"))
+            with self.assertRaisesRegex(ToolError, "conflicts"):
+                server.list_assets(cursor=cursor, kind="figure")
+            for changes in ({"offset": 17}, {"last": 99}, {"document_id": "wrong"}, {"operation": "read_pages"}):
+                with self.assertRaises(ToolError):
+                    server.list_assets(cursor=changed_cursor(cursor, **changes))
+            crop.assert_not_called()
+            describe.assert_not_called()
+
     def test_traversal_tie_breaker_duplicates_and_exact_retrieval(self):
         self.bind_paper("scholarone_two_copies")
         _, store = server._open()
@@ -464,7 +488,7 @@ class TestCatalog(ServerCase):
             with self.assertRaises(ToolError):
                 server.list_assets(first_page=first, last_page=last)
         with self.assertRaisesRegex(ToolError, "Invalid kind"):
-            server.list_assets(kind="page")
+            server.list_assets(kind="unknown")
 
     def test_cursor_replay_and_rejected_conflicts(self):
         self.bind_paper("ieee_single")
@@ -480,7 +504,7 @@ class TestCatalog(ServerCase):
             for changes in (
                 {"document_id": "other"},
                 {"operation": "read_pages"},
-                {"kind": "page"},
+                {"kind": "unknown"},
                 {"first": None},
                 {"last": 99},
                 {"offset": -1},
@@ -495,6 +519,104 @@ class TestCatalog(ServerCase):
         for cursor in ("", "bad cursor", "e30=", "W10=", "a" * 4097):
             with self.assertRaisesRegex(ToolError, "Invalid cursor"):
                 server.list_assets(cursor=cursor)
+
+
+class TestPageImages(ServerCase):
+    def test_lazy_cache_reopens_and_still_delivers_mcp_image_content(self):
+        self.bind_paper("ieee_single")
+        _, store = server._open()
+        original_render = server.crops.crop_png
+
+        def render_without_sqlite_lock(*args, **kwargs):
+            with ThreadPoolExecutor(1) as pool:
+                # A worker must be able to query while the renderer is running.
+                self.assertTrue(pool.submit(store.pages, 1, 1).result(timeout=5))
+            return original_render(*args, **kwargs)
+
+        with mock.patch.object(server.crops, "settings", return_value={"enabled": True, "max_side": 200}):
+            with mock.patch.object(server.crops, "cached_png") as cached:
+                server.get_asset("page:1")
+                server.list_assets(kind="page")
+                server.list_assets()
+                cached.assert_not_called()
+                self.assertFalse((self.run_dir / "images").exists())
+            with mock.patch.object(server.crops, "crop_png", side_effect=render_without_sqlite_lock) as render:
+                first = run(lambda client: client.call_tool("get_asset", {"asset_id": "page:1", "include_image": True}))
+                close_all()
+                server.bind_document()
+                second = run(
+                    lambda client: client.call_tool("get_asset", {"asset_id": "page:1", "include_image": True})
+                )
+                self.assertEqual(render.call_count, 1)
+            self.assertEqual(first.content, second.content)
+            self.assertEqual([type(c).__name__ for c in second.content], ["TextContent", "ImageContent"])
+            self.assertNotIn(str(self.run_dir), second.content[0].text)
+            with mock.patch.object(server.crops, "cached_png", side_effect=OSError(str(self.run_dir))):
+                with self.assertRaisesRegex(ToolError, "Image rendering or persistence failed") as error:
+                    server.get_asset("page:1", include_image=True)
+                self.assertNotIn(str(self.run_dir), str(error.exception))
+
+    def test_page_text_empty_text_disabled_images_and_protocol(self):
+        self.bind_paper("ieee_single")
+        _, store = server._open()
+        with mock.patch.object(server.crops, "cached_png") as crop:
+            detail = json.loads(server.get_asset("page:1")[0].text)
+            self.assertEqual(detail["content"], store.pages(1, 1)[0]["text"])
+            self.assertTrue(detail["visual_available"])
+            self.assertEqual(detail["source_page_ids"], ["page:1"])
+            self.assertEqual(detail["rendered_pages"], [])
+            disabled = json.loads(server.get_asset("page:1", include_image=True)[0].text)
+            self.assertEqual(disabled["image_status"], "disabled")
+            crop.assert_not_called()
+        with store.con:
+            store.con.execute("UPDATE pages SET text = '' WHERE page = 1")
+        with mock.patch.object(server.crops, "settings", return_value={"enabled": True, "max_side": 200}):
+            result = run(lambda client: client.call_tool("get_asset", {"asset_id": "page:1", "include_image": True}))
+        self.assertEqual([type(c).__name__ for c in result.content], ["TextContent", "ImageContent"])
+        detail = json.loads(result.content[0].text)
+        self.assertEqual(detail["content"], "")
+        self.assertEqual(detail["rendered_pages"], [1])
+        self.assertEqual(detail["visual_coverage"], "single_page")
+        for asset_id in ("page:0", "page:-1", "page:01", "page:x", "page:1/extra", "page:1.0", "page:"):
+            with self.assertRaisesRegex(ToolError, "Invalid asset_id"):
+                server.get_asset(asset_id)
+        with self.assertRaises(ToolError):
+            server.get_asset("page:18")
+
+    def test_numbered_source_span_unavailable_bounds_and_clipping(self):
+        self.bind_paper("ieee_single")
+        _, store = server._open()
+        item = store.assets("figure")[0]
+        asset_id = f"segment:{item['segment']}/{item['id']}"
+        first = item["page"]
+        with store.con:
+            store.con.execute("UPDATE assets SET last_page = ? WHERE segment = ? AND id = ?",
+                              (first + 2, item["segment"], item["id"]))
+        with mock.patch.object(server.crops, "settings", return_value={"enabled": True, "max_side": 200}):
+            response = server.get_asset(asset_id, include_image=True)
+            detail = json.loads(response[0].text)
+            self.assertEqual(detail["source_page_ids"], [f"page:{p}" for p in range(first, first + 3)])
+            self.assertEqual(detail["rendered_pages"], [first])
+            self.assertEqual(detail["visual_coverage"], "partial")
+            original_content = detail["content"]
+            for bounds in ((-10, -5, 80, 40), (9000, 9000, 9100, 9100), (30, 30, 10, 10),
+                           (0, 0, float("inf"), 30), (None, 0, 30, 30)):
+                with store.con:
+                    store.con.execute("UPDATE assets SET x0=?, y0=?, x1=?, y1=? WHERE segment=? AND id=?",
+                                      (*bounds, item["segment"], item["id"]))
+                result = server.get_asset(asset_id, include_image=True)
+                detail = json.loads(result[0].text)
+                self.assertEqual(detail["content"], original_content)
+                self.assertEqual(detail["last_page"], first + 2)
+                if bounds[0] == -10:
+                    self.assertTrue(detail["render"]["clipped"])
+                    self.assertEqual(detail["render"]["effective_bounds"], [0, 0, 80, 40])
+                    self.assertEqual(len(result), 2)
+                else:
+                    self.assertEqual(len(result), 1)
+                    self.assertEqual(detail["image_status"], "unavailable")
+                    self.assertTrue(detail["render"]["reason"])
+                    self.assertEqual(detail["rendered_pages"], [])
 
 
 if __name__ == "__main__":

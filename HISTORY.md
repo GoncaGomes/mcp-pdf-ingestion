@@ -407,3 +407,54 @@ Rendering itself, extraction heuristics/schema/fingerprints and MCP-03–05 text
 contracts are preserved. Full-page assets, image caching and visual models remain
 future work. No Git mutations, consumer work or model calls occurred.
 Next: owner review/acceptance; stop after MCP-07.
+
+## 2026-09-28 — MCP-08A — Exact crops and full-page assets
+
+Status: `review_pending`. Added strict page:N IDs, page-only paginated catalogs,
+stored page text and precise crops/full visible pages. Unrotated extraction bounds
+are intersected before conversion to rotated rendering space. Provenance preserves
+source span/page IDs, requested/effective bounds, page geometry, clipping and actual
+coverage. Missing/invalid/outside regions retain text and report unavailable reasons.
+No automatic replacement, stitching, model invocation or extraction/schema changes.
+
+Focused existing-venv checks: `python -m unittest discover -s tests -p test_crops.py -q`
+3 OK; `test_server.py` 20 OK. Colored content/dimensions verified at all four rotations
+with and without a displaced CropBox. MCP ImageContent delivery verified. Focused
+ruff clean after fixing one line-length issue; basedpyright 0/0/0; diff check clean.
+Full suite deferred to the authorized MCP-08B batch boundary. Proceeding to MCP-08B;
+no Git mutations or owner acceptance inferred.
+
+## 2026-09-28 — MCP-08B — Lazy atomic PNG persistence and reuse
+
+Status: `review_pending`; authorized MCP-08A/MCP-08B batch complete. Requested,
+enabled images persist only under the bound run directory. Deterministic PNG slots
+use the existing full fingerprint and canonical asset ID, with matching JSON in a
+PNG tEXt chunk: page/bounds/geometry, settings, PyMuPDF and renderer version.
+Atomic same-directory replacement publishes pixels and metadata together; per-slot
+thread locks do not hold SQLite locks. Cache hits retain actual MCP ImageContent
+and current provenance. Invalid/mismatched PNGs are misses; render/write failures
+preserve prior valid output. No new identity hashing, schema, dependencies or models.
+
+Focused existing-venv checks: `python -m unittest discover -s tests -p test_crops.py -q`
+11 OK; `test_server.py` 21 OK. Verified concurrent reuse, store reopen/new process,
+settings/bounds/geometry/version isolation, corrupt/incomplete PNGs, injected render,
+fsync/replace failures, lazy paths, SQLite access during rendering and cached MCP images.
+An initial corrupt-pixel test exposed PyMuPDF's distinct exception type; handled it
+explicitly. PNG container checks also validate the compressed pixel stream.
+
+Final batch checks (full suite run once):
+- `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py" -q`:
+  108 run, 102 passed, 1 known failure, 5 corpus skips. Only failure is Windows
+  `test_store_location_permissions_and_cache`, chmod 511 != 448. No new unittest
+  failures. Full log: `tmp/mcp-08-unittest.log` (ignored).
+- `.venv/Scripts/ruff.exe check .`: found one 121-character test line; fixed.
+  Focused Ruff on crops.py/test_server.py then passed.
+- `.venv/Scripts/basedpyright.exe`: initially two private-import diagnostics for
+  fitz.mupdf; changed to the explicit pymupdf.mupdf import. Rerun: 0/0/0.
+  Focused test_crops.py rerun after the import correction: 11 OK.
+- `.venv/Scripts/vulture.exe`: clean. `git diff --check`: clean (line-ending notices only).
+
+Existing CPython 3.14.3 environment reused without changes. Multipage images still
+cover only their first stored region; processes may redundantly render concurrently.
+No external corpus/integration/model validation claimed. No Git state was mutated.
+Next: owner review/acceptance; stopped after MCP-08B. Earlier task status unchanged.

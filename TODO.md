@@ -1,34 +1,35 @@
 # MCP PDF ingestion task status
 
-Updated: 2026-09-27. Scope: this repository only.
+Updated: 2026-09-28. Scope: this repository only.
 Read `AGENTS.md` and the selected task in `PLAN.md` before editing.
 
 ## Current work
 
-- Assigned batch: MCP-06 -> MCP-07 (explicitly authorized 2026-09-27).
+- Assigned batch: MCP-08A -> MCP-08B (explicitly authorized 2026-09-28).
 - MCP-03, MCP-04 and MCP-05: `review_pending`; implementation and batch validation complete.
 - MCP-06 and MCP-07: `review_pending`; implementation and batch validation complete.
-- Stopped after MCP-07; next step is owner review/acceptance.
+- MCP-08A and MCP-08B: `review_pending`; implementation and batch validation complete.
+- Stopped after MCP-08B; next step is owner review/acceptance.
 - MCP-01: `done`, consistent with the existing owner-maintained task table.
 - MCP-02: `review_pending`; no new owner acceptance recorded.
 - MCP-00 is planning, not an implementation task.
 
 Statuses: `pending`, `in_progress`, `review_pending`, `done`, `blocked`.
 Only explicit owner acceptance permits `done`. This assigned batch may continue
-sequentially after focused checks; full checks run once after MCP-07.
+sequentially after focused checks; full checks run once after MCP-08B.
 
 ## Thread and commit tracking
 
 One task row is a deliverable, usually one owner-made commit. A task can span
 several assigned blocks/threads. Intermediate blocks leave the parent `in_progress`;
 only the final block can mark it `review_pending`. Owner acceptance permits `done`.
-Do not automatically start an unassigned block; the assigned MCP-06–07 batch is authorized.
+Do not automatically start an unassigned block; the assigned MCP-08A–08B batch is authorized.
 Use PLAN for scope and commit messages.
 
-Observed 2026-09-27 (read-only Git inspection): branch `feat/pdf-evidence-tool`,
-HEAD `b6d73b5ffd7612a1c08e1268360eaf0fe31dd22a` (`feat(reading): add complete
-repeatable reads and paginated search`). Working tree was clean before MCP-06/07.
-Commit presence does not imply owner acceptance; MCP-02–05 statuses are unchanged.
+Observed 2026-09-28 (read-only Git inspection): branch `feat/pdf-evidence-tool`,
+HEAD `6d16490` (`feat(assets): add unique IDs and paginated access without quotas`).
+Working tree was clean before MCP-08A/08B. Commit presence does not imply owner
+acceptance; earlier task statuses are unchanged.
 
 ## Tasks
 
@@ -41,8 +42,8 @@ Commit presence does not imply owner acceptance; MCP-02–05 statuses are unchan
 | MCP-05 | Paginated textual search | review_pending |
 | MCP-06 | Unambiguous assets without consumption quotas | review_pending |
 | MCP-07 | Paginated, filtered asset catalog | review_pending |
-| MCP-08A | Exact crops and full-page images | pending |
-| MCP-08B | Reuse of materialized images | pending |
+| MCP-08A | Exact crops and full-page images | review_pending |
+| MCP-08B | Reuse of materialized images | review_pending |
 | MCP-09A | One-call visual helper and diagnostics | pending |
 | MCP-09B | Visual questions through get_asset | pending |
 | MCP-10 | Package identity and setup alignment | pending |
@@ -78,22 +79,22 @@ means its specified checks passed; it does not mean owner acceptance of the task
 
 - Inherited heading, table and equation extraction errors need reproduced cases
   before changes. They are not an instruction to retune the parser now.
-- Multipage asset images may cover only the first page. Full-page assets await MCP-08;
-  page text remains accessible through read_pages.
+- Multipage asset images cover only the stored first-page region and explicitly report partial coverage.
+  Full-page images are available through page:N; no stitching or missing-region inference.
 - Full-document OCR, new detection families, semantic retrieval, automatic fallback
   and global optimization budgets are outside this plan.
 
 ## Resume note
 
-- MCP-06/MCP-07 batch implemented; both `review_pending`, no earlier task acceptance inferred.
-- Exact canonical asset IDs/mentions, whole-PDF access and no consumption quotas or overview resets.
-- Catalog: 20-item SQL pages, overlap filters, stable ordering, full filtered counts and validated cursors.
-- Changed source: server.py, store.py, papers.py, crops.py, config.json under src/reviewer_mcp.
-- Changed tests: test_server.py, test_assets.py, test_structure.py, test_corpus.py; docs: README/PLAN/TODO/HISTORY.
-- Focused venv checks: assets 6 run/1 skip, structure 8 run/1 skip, server 14 OK (MCP-06), 17 OK (MCP-07);
-  store 11 run/1 known chmod failure/1 corpus skip. No new unresolved failures.
-- Full `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py" -q`: 93 run, 87 passed, 1 failure, 5 skips.
-- Only failure: known Windows chmod assertion (511 != 448); corpus skips require REVIEWER_WORKSPACE.
-  Full local log: tmp/mcp-06-07-unittest.log (ignored). Existing venv CPython 3.14.3 reused unchanged.
-- `.venv/Scripts/ruff.exe check .`, `.venv/Scripts/basedpyright.exe`, `.venv/Scripts/vulture.exe`, `git diff --check`: clean.
-- Next: owner review; stop after MCP-07. Rendering/vision/full-page assets deferred. No Git mutations or model calls.
+- MCP-08A/MCP-08B implemented; both `review_pending`. Earlier task acceptance is unchanged.
+- Added exact rotated crops/full pages, page catalog/text, source page IDs and explicit clipping/coverage.
+- Lazy atomic PNGs embed geometry/settings/identity metadata; repeat/reopen/restart reuse verified.
+- Source: crops.py/server.py/config.json; tests: test_crops.py/test_server.py/pdf_fixtures.py.
+- Docs updated: README, PLAN, HISTORY and AGENTS code map; no model/dependency/schema/heuristic changes.
+- MCP-08A focused unittest: crops 3 OK, server 20 OK; Ruff/Basedpyright/diff clean.
+- MCP-08B focused unittest: crops 11 OK, server 21 OK; crops 11 OK again after exception-import correction.
+- Full `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py" -q`: 108 run, 102 passed, 1 failure, 5 skips.
+- Sole failure: known Windows chmod assertion (511 != 448); corpus skips lack REVIEWER_WORKSPACE PDFs.
+- Full Ruff/Basedpyright found a long line/private import; corrected, focused Ruff and full Basedpyright clean.
+- Full Vulture/diff checks clean. Log: tmp/mcp-08-unittest.log; existing venv CPython 3.14.3 reused.
+- Next: owner review/acceptance. Stop after MCP-08B; no Git mutations, consumer work, remote probes or model calls.

@@ -688,6 +688,24 @@ def write_workspace(root: Path) -> Path:
     return root
 
 
+def build_coloured_pages(path: Path, rotation: int = 0, cropped: bool = False) -> Path:
+    """Four coloured quadrants with a nonzero crop origin, for exact rendering assertions."""
+    with fitz.open() as doc:
+        page = doc.new_page(width=300, height=240)
+        origin_x, origin_y = (40, 30) if cropped else (0, 0)
+        width, height = (200, 120) if cropped else (300, 240)
+        for x, y, color in ((0, 0, (1, 0, 0)), (1, 0, (0, 1, 0)),
+                            (0, 1, (0, 0, 1)), (1, 1, (1, 1, 0))):
+            rect = fitz.Rect(origin_x + x * width / 2, origin_y + y * height / 2,
+                             origin_x + (x + 1) * width / 2, origin_y + (y + 1) * height / 2)
+            page.draw_rect(rect, color=None, fill=color)
+        if cropped:
+            page.set_cropbox(fitz.Rect(origin_x, origin_y, origin_x + width, origin_y + height))
+        page.set_rotation(rotation)
+        doc.save(path)
+    return path
+
+
 class IsolatedTestCase(unittest.TestCase):
     """Runs each test with its own workspace and scratch directory, so nothing is written elsewhere."""
 

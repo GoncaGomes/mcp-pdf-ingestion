@@ -437,6 +437,12 @@ requires a fresh request without a cursor.
 
 ### MCP-08A - Render exact crops and full pages
 
+**Authorized batch (2026-09-28):** implement MCP-08A then MCP-08B sequentially.
+Advance after focused crop/server tests and relevant static checks pass for 08A;
+run the full unittest suite, ruff, basedpyright, vulture and diff check once after
+08B. Leave both tasks `review_pending`, stop after 08B, and do not mutate Git.
+No MCP-09 work, model calls, dependencies, schema or extraction heuristic changes.
+
 **Files:** `crops.py`, `server.py`, `config.json`; new `tests/test_crops.py`,
 `tests/test_server.py`, relevant fixtures.
 
@@ -446,6 +452,18 @@ rotated and invalid regions without inventing a replacement crop. For multipage
 assets, declare first-page-only coverage and expose all source page IDs.
 Keep the existing optional `include_image` transport temporarily for this task's
 MCP image tests; it is removed when MCP-09B establishes the final question interface.
+
+**Rendering decisions:** stored bounds use PyMuPDF's unrotated visible-page point
+coordinates (top-left origin, x right, y down). Intersect with the derotated page
+rectangle, then transform the intersection with the rotation matrix for rendering
+in displayed orientation. Full-page requests select that whole visible rectangle;
+no automatic region substitution. Geometry inspection does not decode images.
+Return `source_page_ids`, `render` (requested/effective bounds, coordinate system,
+rotation/page boxes, availability/reason and clipping), `rendered_pages`,
+`visual_coverage` and limitations. Non-finite source values are strings in JSON.
+Missing/invalid/outside regions have `image_status='unavailable'` when requested
+and enabled; deterministic content is retained. Clipped or multipage renders have
+partial coverage. Page catalogs derive only from page count/range, never page text.
 
 **Verify:** synthetic known page/crop content and dimensions; rotated page; missing
 region; invalid page; partial multipage crop; actual MCP image content delivery.
@@ -462,6 +480,21 @@ region; invalid page; partial multipage crop; actual MCP image content delivery.
 only when document identity, page/bounds and render settings match, using existing
 identity plus a simple key/metadata. Write atomically; do not overwrite valid output
 with a failed render. Do not cache learned interpretations.
+
+**Persistence decisions (2026-09-28):** `crops.cached_png` is called only on the
+enabled/requested image path. A deterministic asset filename lives under
+`run_dir/images/<existing full fingerprint>/`. PNG tEXt embeds JSON matching
+document/asset/page, requested/effective bounds and geometry, max_side, RGB/alpha,
+PyMuPDF version and renderer-format version 1. This keeps pixels and metadata in
+one atomic file, with no sidecar transaction or additional identity hash/database.
+CRC32 is used only for standard PNG chunk validation, never cache keys. Validate
+the PNG container, compressed stream and decoded pixels before reuse/publication.
+Write and fsync a same-directory temporary file, then os.replace; failed writes
+preserve the prior entry. Per-slot thread locks coalesce identical concurrent
+requests outside SQLite locks. Cross-process replacement exposes whole entries;
+processes may redundantly render concurrently. Mismatches are misses, and only
+the latest successful settings occupy each slot. Cache paths stay internal;
+response provenance is recomputed from current source metadata on every call.
 
 **Verify:** repeated request renders once; changed render settings do not reuse the
 wrong image; separate runs are independent; failed write leaves no valid cache hit.
