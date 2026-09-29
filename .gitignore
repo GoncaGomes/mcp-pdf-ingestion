@@ -26,6 +26,9 @@ MANIFEST
 .venv/
 venv
 venv/
+.env
 *.pdf
 tmp/
 reports/
+probe-runs/
+probe-*.json

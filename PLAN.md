@@ -618,22 +618,39 @@ tool annotations and no stdout contamination. Report corpus skips explicitly.
 
 ### MCP-11B - Run owner-authorized probes and record handoff
 
-**Files:** optional `scripts/probe_visual.py`, its tests if substantive, README,
-TODO and HISTORY. No edits to the antenna repository or personal coding-agent settings.
+**Files:** `scripts/probe_mcp.py`, focused tests, optional `probes` dependencies/lock,
+Windows CI/store-test compatibility, README, TODO, HISTORY and code-map notes.
+No edits to the antenna repository or personal coding-agent settings.
 
-**Changes:** first present the proposed PDF/image, question, endpoint/model setting
-names and expected calls. After owner authorization, run sequential text/visual
-probes with explicit outcomes and retained diagnostics. An opt-in script may call
-the MCP or helper; it must not run during normal tests or print secrets.
+**Authorized implementation batch (2026-09-29):** implement `catalog`, `inspect`
+and `agent` subcommands. Require explicit PDF/run directory, local dotenv loading
+with process-environment precedence, visual model aliasing and a 120-second visual
+timeout (MCP call timeout adds 60 seconds). No production dotenv, heuristic, cache
+layout, six-tool-contract or model-policy changes. Catalog traverses all assets
+without rendering or models. Inspect confirms question-free `not_requested`, sends
+the exact question once per explicit repetition and retains tool results, diagnostic
+references and PNG content/mtime comparison. Failures cannot count as cache/vision
+success. The optional Agents SDK stdio probe exposes all six tools, uses an explicit
+Chat Completions model, disables tracing/retries, defaults to eight turns and records
+calls plus final text; text alone is not visual validation. No architecture report.
+
+**Block 11B.1:** implement direct probes and synthetic/mocked focused checks.
+**Block 11B.2:** implement the small local SDK probe, Windows CI alongside existing
+Linux checks, docs and focused SDK/cleanup checks. At batch end run all repository
+checks once. These blocks may proceed sequentially under the current assignment.
+**Block 11B.3 (pending owner execution):** manually run real visual and agent commands,
+review diagnostic/PNG evidence and observations against the paper. Live model calls
+are explicitly prohibited during this implementation batch.
 
 **Verify:** real image/question reaches the VLM; reply/usage/failures are inspectable.
-The owner runs the external Agents SDK integration and provides results. Record
-that evidence as owner-reported unless directly observed; do not infer success.
+The small SDK probe belongs here and establishes standalone operational acceptance.
+Later antenna-project integration is separate. Record owner-supplied execution as
+owner-reported unless directly observed; never infer success from mock tests.
 **Stop:** MCP handoff and known limitations documented. Missing endpoint/access is
 a specific blocker for this task, not a reason to redo the local implementation.
 
 **Suggested owner commit after acceptance:**
-`docs(mcp): record authorized probes and integration handoff`
+`feat(probes): add optional direct MCP and Agents SDK paper checks`
 
 ## 5. Completion and deferred work
 

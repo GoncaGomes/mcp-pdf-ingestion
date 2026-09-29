@@ -563,3 +563,49 @@ scientific or consumer integration validation. No Git state changes, hooks or pu
 MCP-10/MCP-11A await owner acceptance; MCP-11B remains pending. Suggested owner commits:
 `refactor(package): rename reviewer MCP to PDF ingestion` and
 `test(mcp): verify the complete stdio tool contract`. Neither was executed.
+
+## 2026-09-29 - MCP-11B - Optional standalone probes (live validation pending)
+
+Authorized implementation batch only; no real model requests. Added one manual
+scripts/probe_mcp.py with catalog/inspect/agent. Direct calls retain results and
+existing PNG/diagnostic references; explicit repetitions compare PNG bytes/mtime
+and distinct inspection IDs without counting failed vision as cache success.
+Local dotenv configuration preserves process precedence, maps the visual alias,
+forwards explicit document/run/timeout settings, and redacts credentials/endpoint
+values. Optional SDK 0.22.3 API inspected locally before implementation; stdio
+agent uses all six tools, explicit Chat Completions model, zero client/MCP retries,
+no tracing exports, bounded turns, compact call records and subprocess contexts.
+Text-only agent completion does not establish visual success.
+
+Added the optional probes extra and refreshed uv.lock: only its required new
+packages and websockets 17.1 -> 16.1.1 compatibility adjustment changed dependency
+records. No unrelated upgrades. Existing .env ignore preserved; probe outputs
+ignored. Windows CI adds one Python 3.12 job alongside existing Linux versions;
+store test restricts exact 0o700 assertion to POSIX while retaining all other
+assertions. No production permissions, heuristics, cache or tool-policy edits.
+README supplies PowerShell commands/artifact review; PLAN separates local probes
+from later consumer integration. TODO reconciles MCP-10/MCP-11A with prior
+review_pending evidence without inventing acceptance; earlier statuses unchanged.
+
+11B.1/11B.2 focused checks on Windows CPython 3.14.3: 12 probe tests passed,
+including synthetic CLI paths with spaces, pagination, fake inspection failure/
+repeat/redaction, SDK settings and failure/cancellation cleanup. A real SDK stdio
+connection ran with a mocked model loop; no endpoint was called. CLI --help and
+catalog on papers/004_microstrip_patch.pdf passed, yielding 23 assets in two
+catalog responses; output has JSON/SQLite only, no PNG or inspections directory.
+Catalog artifact: probe-runs/microstrip/probe-catalog-9745b0505e1e462381278ef56caf37f6.json.
+One initial Ruff check found line-length issues, corrected before final checks.
+Final batch checks, each command exited 0 (Windows CPython 3.14.3):
+- `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py" -q`:
+  135 run, 130 passed, 5 external-corpus skips; includes 13 final probe tests.
+- `.venv/Scripts/ruff.exe check .`: passed.
+- `.venv/Scripts/basedpyright.exe`: 0 errors/warnings/notes (existing source scope).
+- `.venv/Scripts/vulture.exe`: passed (existing source scope).
+- `git diff --check`: passed; final documentation whitespace rechecked after recording results.
+Logs: tmp/mcp-11b-*.log. Prior Windows mode assertion failure is resolved; no
+cleanup failure occurred. Negative tool tests emitted expected error diagnostics.
+
+Real visual/agent model execution, scientific/manual review, Linux/Python 3.12
+execution and future CI runs remain unverified; corpus tests remain opt-in.
+No Git mutations, commits, hooks, consumer edits or architecture report.
+Suggested owner commit: feat(probes): add optional direct MCP and Agents SDK paper checks.

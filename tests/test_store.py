@@ -84,7 +84,8 @@ class TestPaperStore(IsolatedTestCase):
         store = PaperStore.open(pdf)
         self.assertIs(PaperStore.open(pdf), store)
         self.assertTrue(str(store.path).startswith(str(scratch_base() / "store")))
-        self.assertEqual(stat.S_IMODE(store.path.parent.stat().st_mode), 0o700)
+        if os.name == "posix":
+            self.assertEqual(stat.S_IMODE(store.path.parent.stat().st_mode), 0o700)
         self.assertEqual(store.meta()["extractor_version"], store_module.EXTRACTOR_VERSION)
         store.set_state("manuscript", "4-17")
         self.assertEqual(PaperStore.open(pdf).get_state("manuscript"), "4-17")

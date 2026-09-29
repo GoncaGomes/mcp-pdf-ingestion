@@ -7,31 +7,30 @@ Read `AGENTS.md` and the selected task in `PLAN.md` before editing.
 
 - MCP-01: `done`, consistent with the existing owner-maintained task table.
 - MCP-02: `done`.
-- Assigned batch: review fixes -> MCP-10 -> MCP-11A (authorized 2026-09-29); stop before MCP-11B.
+- Assigned batch: MCP-11B.1 direct probes -> MCP-11B.2 SDK/Windows/docs (authorized 2026-09-29); no live requests.
 - MCP-03, MCP-04 and MCP-05: `done`; implementation and batch validation complete.
 - MCP-06 and MCP-07: `done`; implementation and batch validation complete.
 - MCP-08A and MCP-08B: `done`; implementation and batch validation complete.
 - MCP-09A and MCP-09B: `done`; implementation and batch validation complete.
-- MCP-10 and MCP-11A: `done`; review fixes and local batch validation complete.
-- Stopped before MCP-11B; next step is owner review/acceptance.
+- MCP-10 and MCP-11A: `review_pending`; prior HISTORY/resume recorded no owner acceptance.
+- MCP-11B: `in_progress`; implementation checks passed, real execution/manual review pending.
 
 Statuses: `pending`, `in_progress`, `review_pending`, `done`, `blocked`.
 Only explicit owner acceptance permits `done`. This assigned batch may continue
-sequentially after focused checks; full checks run once after MCP-11A.
+sequentially after focused checks; full checks run once after MCP-11B.2.
 
 ## Thread and commit tracking
 
 One task row is a deliverable, usually one owner-made commit. A task can span
 several assigned blocks/threads. Intermediate blocks leave the parent `in_progress`;
 only the final block can mark it `review_pending`. Owner acceptance permits `done`.
-Do not automatically start an unassigned block; the review fixes -> MCP-10 -> MCP-11A batch is authorized.
+Do not automatically start an unassigned block; MCP-11B.1/11B.2 implementation is authorized, not live requests.
 Use PLAN for scope and commit messages.
 
-Observed 2026-09-29 (read-only Git inspection): branch `feat/pdf-evidence-tool`,
-HEAD `9862ae8` (`fix: documentation and visual inspection prompt`). The initial
-working-tree diff contained only four README separator fixes, preserved by this batch.
-No Git state was mutated. Commit presence does not imply owner acceptance;
-earlier task statuses are unchanged.
+Observed 2026-09-29: branch `feat/pdf-evidence-tool`; initial local change only
+added `.env` to `.gitignore` and is preserved. No Git mutations. MCP-10/MCP-11A
+table statuses reconciled with their prior review_pending HISTORY/resume; no new
+owner acceptance inferred. Earlier owner-maintained statuses are unchanged.
 
 ## Tasks
 
@@ -48,9 +47,9 @@ earlier task statuses are unchanged.
 | MCP-08B | Reuse of materialized images | done |
 | MCP-09A | One-call visual helper and diagnostics | done |
 | MCP-09B | Visual questions through get_asset | done |
-| MCP-10 | Package identity and setup alignment | done |
-| MCP-11A | Complete local stdio contract verification | done |
-| MCP-11B | Authorized probes and consumer handoff evidence | pending |
+| MCP-10 | Package identity and setup alignment | review_pending |
+| MCP-11A | Complete local stdio contract verification | review_pending |
+| MCP-11B | Standalone probes and handoff evidence | in_progress |
 
 Dependencies follow table order. Real endpoint and consumer integration are deferred;
 the coding agent does not inspect or modify the consumer repository.
@@ -68,14 +67,13 @@ means its specified checks passed; it does not mean owner acceptance of the task
 
 ## Blockers and external evidence
 
-- MCP-01 is done per the existing task table; MCP-02 still awaits acceptance.
-- Pre-existing Windows issues observed on this machine: chmod 0o700 is not
-  enforced (one `test_store` failure) and temporary-file locks during cleanup
-  are flaky; corpus/real-PDF tests skip without `REVIEWER_WORKSPACE`.
-- MCP-11B requires owner-selected model/configuration, a probe input and explicit
-  authorization. Never put credential values in this file.
-- Real-paper checks require owner-supplied PDFs. Report unavailable cases as skipped.
-- The owner reviews scientific accuracy and runs/authorizes consumer integration.
+- MCP-11B.3 remains pending owner-run real visual/agent commands and manual review.
+- Exact input located: `papers/004_microstrip_patch.pdf`; catalog ran without a model.
+- Models/endpoint credentials remain owner-selected; never put their values here.
+- Earlier Windows chmod test failure is addressed with a POSIX-only mode assertion;
+  location/cache/persistence assertions remain on Windows. Full results below.
+- Five corpus tests require `REVIEWER_WORKSPACE`; no corpus/remote checks enabled.
+- Owner reviews scientific accuracy; later consumer integration remains separate.
 
 ## Deferred limitations
 
@@ -88,15 +86,14 @@ means its specified checks passed; it does not mean owner acceptance of the task
 
 ## Resume note
 
-- Batch complete at MCP-11A: MCP-10/MCP-11A review_pending; MCP-11B pending; earlier acceptance unchanged.
-- Review fixes: byte-identical prompt reflow, preserved README separators, diagnostic error_type/nullable http_status; public results unchanged.
-- Package/command mcp-pdf-ingestion; imports src/mcp_pdf_ingestion; CI/hooks/resources/docs aligned; active legacy env names retained.
-- Extraction/store/fingerprints/assets/cursors/cache/config verified unchanged beyond imports; uv lock dependency records identical to HEAD.
-- `uv lock --offline`, isolated editable install, `uv build --wheel`, isolated wheel install: passed; final wheel rebuilt/rechecked after diagnostic edit.
-- Both installs passed resource/import/entry-point/six-tool stdio smoke checks outside checkout without PYTHONPATH; logs tmp/mcp-10-*.log.
-- Focused unittest: visual 10, init 2, crops 11, server 24 passed; focused Ruff passed; fixture/import setup corrections resolved.
-- Final `.venv/Scripts/python.exe -m unittest discover -s tests -p 'test_*.py' -q`: 122 run, 116 passed, 1 known Windows chmod failure (511 != 448), 5 corpus skips; tmp/mcp-10-11a-unittest.log.
-- Final `.venv/Scripts/ruff.exe check .`, `.venv/Scripts/basedpyright.exe`, `.venv/Scripts/vulture.exe`, `git diff --check`: passed; tmp/mcp-10-11a-*.log.
-- StdIO: real renamed command, native auto/legacy negotiation, six schemas/annotations, actual pagination, repeated IDs/reads, no forms/corpus/visual env, clean protocol and exited processes.
-- Windows CPython 3.14.3 verified; Python 3.12/POSIX/live endpoints/consumer not tested. No Git mutations, hooks, new dependencies or real model calls.
-- Next: owner review/acceptance and optional commits per PLAN; do not start MCP-11B without its separate authorization/configuration/input.
+- MCP-11B.1/11B.2 implementation complete; parent in_progress, live block 11B.3 pending.
+- Added scripts/probe_mcp.py: catalog/inspect/agent, local dotenv, explicit models/timeouts, failure records.
+- Added optional probes extra/lock, synthetic/mock tests, Windows CI and POSIX-only store-mode assertion.
+- Preserved existing .env ignore; ignored probe outputs; no production server/cache/heuristic changes.
+- SDK 0.22.3 inspected locally; required websockets adjustment 17.1 -> 16.1.1, no unrelated upgrades.
+- Windows CPython 3.14.3: focused test_probe_mcp.py 12 passed; CLI help and real PDF catalog passed (23 assets, 2 pages).
+- Fake agent checks cover zero retries/tracing, six tools, visual evidence and cleanup; actual SDK stdio tested without models.
+- README/PLAN/AGENTS updated; MCP-10/MCP-11A contradictory done statuses reconciled to review_pending.
+- Final full discovery: 135 run, 130 passed, 5 corpus skips; includes 13 probe tests. Ruff/Basedpyright/Vulture/diff passed.
+- Exact checks: .venv/Scripts/python.exe -m unittest discover -s tests -p test_*.py -q; .venv/Scripts/{ruff.exe check .,basedpyright.exe,vulture.exe}; git diff --check; logs tmp/mcp-11b-*.log.
+- No live requests, consumer work, owner acceptance or Git mutations. Next: owner manual commands for 11B.3 and review; no further implementation block authorized.

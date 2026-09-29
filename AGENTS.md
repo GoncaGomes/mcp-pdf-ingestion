@@ -38,6 +38,7 @@ removing reviewer-only features.
 | `config.py`, `runner.py` | Settings (document configuration, lazy visual environment, section values) and process execution. |
 | `tests/pdf_fixtures.py`, `tests/` | Synthetic PDFs, installed-console stdio contract, isolation and fake visual unittest coverage. |
 | Root `pyproject.toml` | Dependencies, package settings and entry point. |
+| `scripts/probe_mcp.py` | Optional manual catalog, visual inspection and small Agents SDK probes; local dotenv configuration only. |
 
 ## One assigned block per session
 
@@ -113,6 +114,9 @@ Use the repository's existing virtual environment, not system-wide packages.
 `python -m pip install -e ".[dev]"` inside it. Do not upgrade unrelated dependencies.
 If pip is unavailable in an existing uv environment, use `uv pip install` targeting
 that interpreter rather than creating another environment. Do not migrate tooling.
+Optional probe tests use `.[dev,probes]`; the production server does not import the
+Agents SDK or load dotenv. Never run inspect/agent probes against a real endpoint
+without explicit authorization; catalog is deterministic and model-free.
 
 During a block, run focused tests, for example:
 

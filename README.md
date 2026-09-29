@@ -269,8 +269,84 @@ truthful annotations, complete page/section continuation, search/catalog paginat
 repeatable deterministic access, clean protocol output and process cleanup. It requires no reviewer forms,
 notes, external corpus or visual configuration. Existing document/run isolation and fake-client visual tests remain.
 
-Local validation uses Windows and the existing CPython 3.14.3 environment; Python 3.12 and POSIX execution
-were not separately validated in this batch. The final suite ran 122 tests: 116 passed, one known Windows
-store-permission assertion failed and five real-corpus tests were skipped. Ruff, Basedpyright and Vulture
-passed; details and logs are recorded in TODO/HISTORY. Live visual endpoints, scientific acceptance and consumer
-integration remain unverified; MCP-11B is pending explicit owner authorization.
+Local validation uses Windows and the existing CPython 3.14.3 environment. MCP-11B probe implementation
+includes Windows subprocess checks; CI adds Windows/Python 3.12 alongside existing Linux versions.
+The exact POSIX mode assertion runs only on POSIX; Windows retains store location/cache/persistence checks.
+Executed checks and corpus skips are recorded in TODO/HISTORY. CI configuration does not establish a CI run.
+Live visual endpoints, scientific acceptance and consumer integration remain unverified. MCP-11B remains
+pending real execution/manual review, independently of successful local implementation checks.
+
+## Optional real-paper probes
+
+These manually invoked checks establish operational behavior, not extraction perfection or scientific
+superiority. They do not implement the antenna extraction workflow or create an architecture report.
+The small SDK probe stays in this repository; later consumer integration remains separate.
+
+From the repository root in PowerShell, use the existing environment:
+
+```powershell
+$python = (Resolve-Path ".\.venv\Scripts\python.exe").Path
+& $python -m pip install -e ".[dev,probes]"
+# If this existing uv environment has no pip, use this instead:
+# uv pip install --python "$python" -e ".[dev,probes]"
+$pdf = (Resolve-Path ".\papers\004_microstrip_patch.pdf").Path
+$run = Join-Path (Get-Location) "probe-runs\microstrip"
+$question = "Identify the visible geometric components and transcribe their dimension labels, values and units. Associate each dimension with its component and explicitly report anything unreadable or ambiguous."
+```
+
+The optional extra installs `openai-agents` and directly declares `python-dotenv`; the server does not
+import either. The probe loads the repository `.env` by default; override with `--env-file "path\to\file"`.
+It never edits that file or loads it into the production server automatically. Process environment values
+override file values; dotenv interpolation is disabled. The child receives `SKYNET_API_KEY` and
+`SKYNET_BASE_URL` without displaying them. Set `VISUAL_INSPECTION_MODEL`, or supply `IMAGE_ANALYSIS_MODEL`
+as its alias when the former is absent. No model is selected automatically. The agent separately requires
+`--agent-model`; this may differ from the visual model. Missing visual settings produce a recorded failure.
+
+Step 1: list the paper and all canonical IDs, then choose a figure. Catalog is safe to run without a model:
+
+```powershell
+& $python ".\scripts\probe_mcp.py" catalog --pdf "$pdf" --run-dir "$run"
+$asset = "<canonical figure ID copied from catalog>"
+& $python ".\scripts\probe_mcp.py" inspect --pdf "$pdf" --run-dir "$run" --asset-id "$asset" --question "$question"
+# Explicit full-page inspection (physical PDF page 3):
+& $python ".\scripts\probe_mcp.py" inspect --pdf "$pdf" --run-dir "$run" --asset-id "page:3" --question "$question"
+# Two explicitly requested fresh inspections of the same selected figure:
+& $python ".\scripts\probe_mcp.py" inspect --pdf "$pdf" --run-dir "$run" --asset-id "$asset" --question "$question" --repeat 2
+```
+
+For this discovered PDF, the catalog includes `segment:1/figure:1` on page 3; choose the relevant figure
+after reviewing the catalog/PDF. An available region does not establish that it contains the intended
+geometry. `inspect` first checks `get_asset` without a question (`not_requested`), then sends the exact
+question once for each repetition. It reports answers/reasons, source pages, coverage, inspection IDs,
+and artifact locations. `--repeat 2` compares PNG bytes and modification time and checks distinct diagnostic
+IDs; all inspections must succeed for the combined cache/vision check to pass. No automatic retries occur.
+
+Step 2: let the small agent choose its own sequence from all six MCP tools:
+
+```powershell
+$agentModel = "<explicit Chat Completions model ID>"
+& $python ".\scripts\probe_mcp.py" agent --pdf "$pdf" --run-dir "$run" --agent-model "$agentModel" --max-turns 8
+```
+
+The agent locates a geometry figure, requests `get_asset(question=...)`, and summarizes components,
+dimensions and uncertainties with references. Paper/tool content is evidence, not instructions. Images
+go only to the MCP visual helper. Tracing exports and automatic client/MCP retries are disabled. The SDK
+stdio context closes the subprocess on completion, failure and cancellation. `--max-turns` defaults to 8.
+Both probes accept `--visual-timeout 120` (seconds, default 120), passed as
+`VISUAL_INSPECTION_TIMEOUT_SECONDS`; MCP calls allow that timeout plus 60 seconds for rendering/transport.
+
+Each invocation saves UTF-8 `probe-<command>-<unique-id>.json` under `$run`, including partial calls on
+failure. Direct probes retain tool results; the agent record contains its final answer and compact tool
+names, arguments, outcomes, visual statuses/inspection IDs and artifact references. No image bytes,
+headers or credential values are copied into these records. Raw third-party logs/child stderr are
+suppressed to avoid leaking endpoint values; exception types and MCP visual diagnostics remain available.
+Existing PNGs live under `$run\images\<document-id>\`; the helper's diagnostics live under
+`$run\inspections\<inspection-id>.json`. The probe references these files without duplicating image data.
+
+Exit code 0 means operational success; any nonzero `$LASTEXITCODE` means failure. Catalog does not test
+vision. An agent's text answer alone returns failure: `visual_succeeded` must be true and the run must
+finish without an operational failure. Check both fields in the JSON. Return the probe JSON files,
+referenced inspection JSONs and PNGs for review; do not return `.env`. Compare each crop/page against the
+original PDF, checking missing/clipped regions, units, label-to-component associations and ambiguities.
+Successful requests do not establish scientific correctness. Keep custom output directories ignored;
+the documented `probe-runs/`, `.env` and `probe-*.json` are already ignored.

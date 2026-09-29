@@ -23,6 +23,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+probes = [
+    "openai-agents>=0.22.3,<0.23",
+    "python-dotenv>=1.2,<2",
+]
 dev = [
     "ruff",
     "basedpyright",
