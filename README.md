@@ -1,7 +1,7 @@
 # reviewer-mcp
 
 An MCP (Model Context Protocol) server that serves one academic paper PDF as evidence: it reads the PDF
-deterministically and exposes it through six neutral tools — document overview, page and section reads, search, and
+deterministically and exposes it through six neutral tools - document overview, page and section reads, search, and
 numbered-item listing and retrieval. It does not select content, synthesise conclusions or validate scientific claims;
 the consuming agent decides what to read and how to use it.
 
@@ -13,7 +13,7 @@ the consuming agent decides what to read and how to use it.
   numbered items (figures, tables, equations, algorithms, listings, references) with their citations. No LLM involved.
 * **Numbered items read the way they are printed**: a caption is a label, a separator and the caption text
   (`Fig. 1. Evolution ...`, `Table 4: Benchmark datasets`), or a label alone on its line whose text is the line below
-  (`Table 1` / `Summary of ...`) — a space is not a separator, so `Table 5 compares ...` stays a sentence. The label
+  (`Table 1` / `Summary of ...`) - a space is not a separator, so `Table 5 compares ...` stays a sentence. The label
   takes a full or short name with or without the period, and the letter of a part belongs to the number, so
   `Fig. 5(a)` and `Fig. 5(b)` are the items `5a` and `5b`, each with its own region. Items set after the References
   count too: floats at the end of a proof, and appendices.
@@ -27,15 +27,15 @@ the consuming agent decides what to read and how to use it.
 
 ## Tools (6)
 
-1. `get_paper_overview` — start here: document identity (file name and content fingerprint), page count, extracted title when one is found, the full-PDF
+1. `get_paper_overview` - start here: document identity (file name and content fingerprint), page count, extracted title when one is found, the full-PDF
    outline with section ids, numbered-item counts and extraction warnings.
-2. `read_pages(first_page=None, last_page=None, cursor=None)` — repeatable page-labelled text, including
+2. `read_pages(first_page=None, last_page=None, cursor=None)` - repeatable page-labelled text, including
    references, with exact continuation within long pages (12,000 text characters per response).
-3. `read_section(section_id, cursor=None)` — complete section text by an ID from the overview outline,
+3. `read_section(section_id, cursor=None)` - complete section text by an ID from the overview outline,
    including subsections until the next equal/higher heading, with page provenance and continuation.
-4. `search_paper(query, first_page=None, last_page=None, cursor=None)` — paginated textual matches,
+4. `search_paper(query, first_page=None, last_page=None, cursor=None)` - paginated textual matches,
    total matching paragraphs, source pages, section IDs/titles and snippets.
-5. `list_assets(kind=None, first_page=None, last_page=None, cursor=None)` — paginated numbered items,
+5. `list_assets(kind=None, first_page=None, last_page=None, cursor=None)` - paginated numbered items,
    including references, with canonical IDs and source bounds.
 6. `get_asset(asset_id, question=None)` - full extracted content and citations for an exact asset or page.
    An explicit non-blank question requests one fresh visual inspection of its precise crop/full-page PNG.
@@ -186,24 +186,24 @@ external consumer integration is deferred.
 
 ## Environment
 
-* `PDF_INGESTION_PDF` — the PDF bound to the server process; required, must exist as a usable PDF (relative paths
+* `PDF_INGESTION_PDF` - the PDF bound to the server process; required, must exist as a usable PDF (relative paths
   are resolved against the startup working directory, spaces preserved).
-* `PDF_INGESTION_RUN_DIR` — isolated run directory for derived data; required, may not exist yet (persistence creates
+* `PDF_INGESTION_RUN_DIR` - isolated run directory for derived data; required, may not exist yet (persistence creates
   it on demand) and must not point to an existing file.
-* `REVIEWER_CONFIG` — JSON file overriding values of `config.json`: layout factors (`heuristics`), image
+* `REVIEWER_CONFIG` - JSON file overriding values of `config.json`: layout factors (`heuristics`), image
   rendering (`images`: `max_side`). Remove obsolete `images.enabled`, `images.budget` and
   `replies.asset_budget` overrides; unknown image settings are rejected when rendering is requested.
   A question is the only visual trigger; there is no second enable switch or consumption quota.
-* `REVIEWER_SCRATCH_BASE` — legacy store base (default `/tmp/reviewer`) used only when a store is opened without an
+* `REVIEWER_SCRATCH_BASE` - legacy store base (default `/tmp/reviewer`) used only when a store is opened without an
   explicit run directory (internal extractor tests); the server always uses its bound run directory.
 
 The following environment settings are required **only for an explicit visual inspection**. Startup,
 text tools and question-free assets work without them. No dotenv loader or default model is supplied:
 
-* `SKYNET_BASE_URL` � absolute HTTP(S) URL of the OpenAI-compatible service.
-* `SKYNET_API_KEY` � service credential, never included in diagnostics.
-* `VISUAL_INSPECTION_MODEL` � host-selected model identifier; no fallback.
-* `VISUAL_INSPECTION_TIMEOUT_SECONDS` � required positive finite seconds, passed explicitly to the client/request.
+* `SKYNET_BASE_URL` � absolute HTTP(S) URL of the OpenAI-compatible service.
+* `SKYNET_API_KEY` � service credential, never included in diagnostics.
+* `VISUAL_INSPECTION_MODEL` � host-selected model identifier; no fallback.
+* `VISUAL_INSPECTION_TIMEOUT_SECONDS` � required positive finite seconds, passed explicitly to the client/request.
 
 The async OpenAI SDK uses `max_retries=0`. Missing or invalid settings produce a diagnostic
 `configuration_error` without initializing a client or sending a request.
