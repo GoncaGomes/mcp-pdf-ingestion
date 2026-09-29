@@ -5,16 +5,15 @@ Read `AGENTS.md` and the selected task in `PLAN.md` before editing.
 
 ## Current work
 
-- Assigned batch: review fixes -> MCP-10 -> MCP-11A (authorized 2026-09-29); stop before MCP-11B.
-- MCP-03, MCP-04 and MCP-05: `review_pending`; implementation and batch validation complete.
-- MCP-06 and MCP-07: `review_pending`; implementation and batch validation complete.
-- MCP-08A and MCP-08B: `review_pending`; implementation and batch validation complete.
-- MCP-09A and MCP-09B: `review_pending`; implementation and batch validation complete.
-- MCP-10 and MCP-11A: `review_pending`; review fixes and local batch validation complete.
-- Stopped before MCP-11B; next step is owner review/acceptance.
 - MCP-01: `done`, consistent with the existing owner-maintained task table.
-- MCP-02: `review_pending`; no new owner acceptance recorded.
-- MCP-00 is planning, not an implementation task.
+- MCP-02: `done`.
+- Assigned batch: review fixes -> MCP-10 -> MCP-11A (authorized 2026-09-29); stop before MCP-11B.
+- MCP-03, MCP-04 and MCP-05: `done`; implementation and batch validation complete.
+- MCP-06 and MCP-07: `done`; implementation and batch validation complete.
+- MCP-08A and MCP-08B: `done`; implementation and batch validation complete.
+- MCP-09A and MCP-09B: `done`; implementation and batch validation complete.
+- MCP-10 and MCP-11A: `done`; review fixes and local batch validation complete.
+- Stopped before MCP-11B; next step is owner review/acceptance.
 
 Statuses: `pending`, `in_progress`, `review_pending`, `done`, `blocked`.
 Only explicit owner acceptance permits `done`. This assigned batch may continue
@@ -39,18 +38,18 @@ earlier task statuses are unchanged.
 | ID | Deliverable | Status |
 | --- | --- | --- |
 | MCP-01 | Six neutral tools, no reviewer policy | done |
-| MCP-02 | One configured PDF and isolated run directory | review_pending |
-| MCP-03 | Repeatable, complete page reads | review_pending |
-| MCP-04 | Complete section reads by ID | review_pending |
-| MCP-05 | Paginated textual search | review_pending |
-| MCP-06 | Unambiguous assets without consumption quotas | review_pending |
-| MCP-07 | Paginated, filtered asset catalog | review_pending |
-| MCP-08A | Exact crops and full-page images | review_pending |
-| MCP-08B | Reuse of materialized images | review_pending |
-| MCP-09A | One-call visual helper and diagnostics | review_pending |
-| MCP-09B | Visual questions through get_asset | review_pending |
-| MCP-10 | Package identity and setup alignment | review_pending |
-| MCP-11A | Complete local stdio contract verification | review_pending |
+| MCP-02 | One configured PDF and isolated run directory | done |
+| MCP-03 | Repeatable, complete page reads | done |
+| MCP-04 | Complete section reads by ID | done |
+| MCP-05 | Paginated textual search | done |
+| MCP-06 | Unambiguous assets without consumption quotas | done |
+| MCP-07 | Paginated, filtered asset catalog | done |
+| MCP-08A | Exact crops and full-page images | done |
+| MCP-08B | Reuse of materialized images | done |
+| MCP-09A | One-call visual helper and diagnostics | done |
+| MCP-09B | Visual questions through get_asset | done |
+| MCP-10 | Package identity and setup alignment | done |
+| MCP-11A | Complete local stdio contract verification | done |
 | MCP-11B | Authorized probes and consumer handoff evidence | pending |
 
 Dependencies follow table order. Real endpoint and consumer integration are deferred;
