@@ -1,4 +1,4 @@
-"""Configuration constants and default path settings for reviewer-mcp."""
+"""Configuration constants and default path settings for mcp-pdf-ingestion."""
 
 from __future__ import annotations
 
@@ -61,8 +61,7 @@ class VisualConfig:
 def load_visual_config() -> VisualConfig:
     """Require environment-only visual settings without choosing a model or contacting it."""
     values = {}
-    for name in ("SKYNET_BASE_URL", "SKYNET_API_KEY", "VISUAL_INSPECTION_MODEL",
-                 "VISUAL_INSPECTION_TIMEOUT_SECONDS"):
+    for name in ("SKYNET_BASE_URL", "SKYNET_API_KEY", "VISUAL_INSPECTION_MODEL", "VISUAL_INSPECTION_TIMEOUT_SECONDS"):
         value = os.environ.get(name, "").strip()
         if not value:
             raise ValueError(f"{name} is required for visual inspection.")
@@ -80,8 +79,7 @@ def load_visual_config() -> VisualConfig:
         timeout = float("nan")
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("VISUAL_INSPECTION_TIMEOUT_SECONDS must be positive and finite.")
-    return VisualConfig(values["SKYNET_BASE_URL"], values["SKYNET_API_KEY"],
-                        values["VISUAL_INSPECTION_MODEL"], timeout)
+    return VisualConfig(values["SKYNET_BASE_URL"], values["SKYNET_API_KEY"], values["VISUAL_INSPECTION_MODEL"], timeout)
 
 
 def load_document_config() -> DocumentConfig:

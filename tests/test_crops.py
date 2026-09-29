@@ -9,8 +9,8 @@ from unittest import mock
 import pymupdf as fitz
 from pdf_fixtures import IsolatedTestCase, build_coloured_pages
 
-from reviewer_mcp import crops
-from reviewer_mcp.store import fingerprint
+from mcp_pdf_ingestion import crops
+from mcp_pdf_ingestion.store import fingerprint
 
 
 class TestCrops(IsolatedTestCase):
@@ -22,15 +22,14 @@ class TestCrops(IsolatedTestCase):
                 with self.subTest(cropped=cropped, rotation=rotation):
                     pdf = build_coloured_pages(self.tmp_path / f"{cropped}-{rotation}.pdf", rotation, cropped)
                     full = fitz.Pixmap(crops.crop_png(pdf, 1, None, width))
-                    self.assertEqual((full.width, full.height),
-                                     (height, width) if rotation % 180 else (width, height))
+                    self.assertEqual((full.width, full.height), (height, width) if rotation % 180 else (width, height))
                     with fitz.open(pdf) as doc:
                         matrix = doc[0].rotation_matrix
                         for index, (x, y) in enumerate(((0, 0), (1, 0), (0, 1), (1, 1))):
-                            centre = fitz.Point((x + .5) * width / 2, (y + .5) * height / 2) * matrix
+                            centre = fitz.Point((x + 0.5) * width / 2, (y + 0.5) * height / 2) * matrix
                             self.assertEqual(full.pixel(int(centre.x), int(centre.y)), colors[index])
                     # Asymmetric interior rectangle: never include another quadrant or a page margin.
-                    bbox = (10., 8., width / 2 - 10, height / 2 - 8)
+                    bbox = (10.0, 8.0, width / 2 - 10, height / 2 - 8)
                     image = fitz.Pixmap(crops.crop_png(pdf, 1, bbox, 160))
                     self.assertEqual(max(image.width, image.height), 160)
                     self.assertEqual(image.width > image.height, rotation % 180 == 0)
@@ -44,15 +43,20 @@ class TestCrops(IsolatedTestCase):
 
     def test_clipping_and_invalid_regions(self):
         pdf = build_coloured_pages(self.tmp_path / "clip.pdf", 90, True)
-        bbox = (-10., -5., 80., 40.)
+        bbox = (-10.0, -5.0, 80.0, 40.0)
         info = crops.describe_region(pdf, 1, bbox)
         self.assertTrue(info["clipped"])
         self.assertEqual(info["effective_bounds"], [0, 0, 80, 40])
         pix = fitz.Pixmap(crops.crop_png(pdf, 1, bbox, 160))
         self.assertEqual((pix.width, pix.height), (80, 160))
         self.assertEqual(pix.pixel(40, 80), (255, 0, 0))
-        for invalid in ((210, 0, 220, 10), (20, 20, 10, 30), (10, 10, 10, 20),
-                        (0, float("inf"), 10, 20), (0, 0, float("nan"), 20)):
+        for invalid in (
+            (210, 0, 220, 10),
+            (20, 20, 10, 30),
+            (10, 10, 10, 20),
+            (0, float("inf"), 10, 20),
+            (0, 0, float("nan"), 20),
+        ):
             with self.subTest(bounds=invalid):
                 info = crops.describe_region(pdf, 1, invalid)
                 self.assertFalse(info["available"])
@@ -80,8 +84,13 @@ class TestImageCache(IsolatedTestCase):
     def render(self, *, bbox=None, size=200, pdf=None, run_dir=None, asset_id="page:1", region=None):
         pdf = pdf or self.pdf
         return crops.cached_png(
-            pdf, 1, bbox, size, run_dir=run_dir or self.run_dir,
-            document_id=fingerprint(pdf), asset_id=asset_id,
+            pdf,
+            1,
+            bbox,
+            size,
+            run_dir=run_dir or self.run_dir,
+            document_id=fingerprint(pdf),
+            asset_id=asset_id,
             region=region or crops.describe_region(pdf, 1, bbox),
         )
 
@@ -131,20 +140,21 @@ class TestImageCache(IsolatedTestCase):
 
     def test_new_process_reuses_persisted_png(self):
         self.render()
-        script = '''
+        script = """
 from pathlib import Path
 from unittest.mock import patch
 import sys
-from reviewer_mcp import crops
-from reviewer_mcp.store import fingerprint
+from mcp_pdf_ingestion import crops
+from mcp_pdf_ingestion.store import fingerprint
 pdf, run = map(Path, sys.argv[1:])
 with patch.object(crops, "crop_png", side_effect=AssertionError("must reuse persisted PNG")):
     data = crops.cached_png(pdf, 1, None, 200, run_dir=run, document_id=fingerprint(pdf),
                             asset_id="page:1", region=crops.describe_region(pdf, 1, None))
     assert data.startswith(b"\\x89PNG")
-'''
-        result = subprocess.run([sys.executable, "-c", script, str(self.pdf), str(self.run_dir)],
-                                capture_output=True, text=True, timeout=30)
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(self.pdf), str(self.run_dir)], capture_output=True, text=True, timeout=30
+        )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_failed_render_or_atomic_write_preserves_valid_output(self):
@@ -174,8 +184,9 @@ with patch.object(crops, "crop_png", side_effect=AssertionError("must reuse pers
 
     def test_render_failure_and_invalid_render_never_create_successful_entry(self):
         for outcome in (RuntimeError("failed"), b"not a PNG"):
-            with mock.patch.object(crops, "crop_png", side_effect=outcome if isinstance(outcome, Exception) else None,
-                                   return_value=outcome):
+            with mock.patch.object(
+                crops, "crop_png", side_effect=outcome if isinstance(outcome, Exception) else None, return_value=outcome
+            ):
                 with self.assertRaises((RuntimeError, ValueError)):
                     self.render()
             self.assertFalse(self.run_dir.exists())
@@ -192,8 +203,8 @@ with patch.object(crops, "crop_png", side_effect=AssertionError("must reuse pers
         broken_pixels = bytearray(no_metadata)
         start = broken_pixels.index(b"IDAT")
         size = crops.struct.unpack_from(">I", broken_pixels, start - 4)[0]
-        broken_pixels[start + 4:start + 4 + size] = b"x" * size
-        checksum = crops.zlib.crc32(broken_pixels[start:start + 4 + size])
+        broken_pixels[start + 4 : start + 4 + size] = b"x" * size
+        checksum = crops.zlib.crc32(broken_pixels[start : start + 4 + size])
         crops.struct.pack_into(">I", broken_pixels, start + 4 + size, checksum)
         for invalid in (b"", original[:40], original[:-12], bytes(corrupt), no_metadata, bytes(broken_pixels)):
             with self.subTest(length=len(invalid)):

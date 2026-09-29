@@ -1,6 +1,6 @@
 """Server runner: clean stdio transport and prompt shutdown on signals.
 
-The MCP protocol version 2026-07-28 preferred by Goose is negotiated natively by fastmcp>=4.0.3 / mcp>=2.2.
+The installed FastMCP/MCP libraries negotiate the protocol version natively.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-# reviewer-mcp
+# mcp-pdf-ingestion
 
 An MCP (Model Context Protocol) server that serves one academic paper PDF as evidence: it reads the PDF
 deterministically and exposes it through six neutral tools - document overview, page and section reads, search, and
@@ -21,9 +21,36 @@ the consuming agent decides what to read and how to use it.
   own follows and the next page opens with rules with the same ends, it carries on there. Booktabs' three rules and a
   table ruled on every row behave alike. Items report a page span (`"15-16"`).
 * **Layout rules relative to each document**: tolerances are factors of the measured body size and line height
-  (`src/reviewer_mcp/config.json`, overridable with `REVIEWER_CONFIG`).
+  (`src/mcp_pdf_ingestion/config.json`, overridable with `REVIEWER_CONFIG`).
 * **No files exposed**: tools operate on the server's bound PDF with PDF page numbers; no scratch paths in any reply.
-* **MCP protocol `2026-07-28`**, negotiated natively by fastmcp 4.
+* **MCP protocol negotiation** handled natively by the installed FastMCP/MCP libraries.
+
+## Installation and launch
+
+Requires Python 3.12 or later. From this checkout, create/activate a virtual environment and install:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+$env:PDF_INGESTION_PDF = "C:\data\paper.pdf"
+$env:PDF_INGESTION_RUN_DIR = "C:\data\paper-run"
+mcp-pdf-ingestion
+```
+
+On POSIX shells, activate with `source .venv/bin/activate` and launch with:
+
+```bash
+PDF_INGESTION_PDF="/data/paper.pdf" PDF_INGESTION_RUN_DIR="/data/paper-run" mcp-pdf-ingestion
+```
+
+For an existing uv environment without pip, use
+`uv pip install --python .venv/Scripts/python.exe -e ".[dev]"` on Windows (use `.venv/bin/python` on POSIX).
+The distribution and console command are `mcp-pdf-ingestion`; the import package is `mcp_pdf_ingestion`.
+A wheel can be built with `python -m build --wheel` and installed with `python -m pip install <wheel-path>`.
+Use the console command in the MCP host's stdio configuration, with the two document environment variables.
+The process binds one PDF at startup; stdout is reserved for MCP transport. No PYTHONPATH setting is required.
+Package renaming does not migrate stores or invalidate existing document fingerprints, cursors, asset IDs or PNGs.
 
 ## Tools (6)
 
@@ -106,6 +133,10 @@ credentials are omitted/redacted. Endpoint settings record only scheme/host, nev
 Received responses are saved with outcome `received` before answer validation, then the same record is updated
 with its final outcome. A process interruption can leave that intermediate record for diagnosis.
 Empty/truncated/refused/tool-call outputs remain diagnostics only. Transport failures have no completion payload.
+Diagnostics include `error_type` (exception class name, otherwise null) and `http_status`
+(integer SDK HTTP status, otherwise null). These fields are local metadata, not public visual-result fields.
+Exception messages/representations, raw error bodies, headers, credentials and request URLs are never stored.
+Configuration diagnostics use a fixed reason; public configuration guidance is unchanged.
 Required diagnostic write failure returns neither success nor an inspection ID; a previously saved intermediate
 record may remain locally. Cancellation propagates and attempts to save a cancelled outcome.
 
@@ -200,22 +231,46 @@ external consumer integration is deferred.
 The following environment settings are required **only for an explicit visual inspection**. Startup,
 text tools and question-free assets work without them. No dotenv loader or default model is supplied:
 
-* `SKYNET_BASE_URL` � absolute HTTP(S) URL of the OpenAI-compatible service.
-* `SKYNET_API_KEY` � service credential, never included in diagnostics.
-* `VISUAL_INSPECTION_MODEL` � host-selected model identifier; no fallback.
-* `VISUAL_INSPECTION_TIMEOUT_SECONDS` � required positive finite seconds, passed explicitly to the client/request.
+* `SKYNET_BASE_URL` - absolute HTTP(S) URL of the OpenAI-compatible service.
+* `SKYNET_API_KEY` - service credential, never included in diagnostics.
+* `VISUAL_INSPECTION_MODEL` - host-selected model identifier; no fallback.
+* `VISUAL_INSPECTION_TIMEOUT_SECONDS` - required positive finite seconds, passed explicitly to the client/request.
 
 The async OpenAI SDK uses `max_retries=0`. Missing or invalid settings produce a diagnostic
 `configuration_error` without initializing a client or sending a request.
 
 ## Development
 
-Install dev tools and pre-commit hooks:
+With the project environment activated, run the existing checks:
 
 ```bash
-pip install -e ".[dev]"
-pre-commit install
-pre-commit run --all-files
+python -m unittest discover -s tests -p "test_*.py" -q
+ruff check .
+basedpyright
+vulture
+git diff --check
 ```
 
-Real-paper checks run when `REVIEWER_WORKSPACE` points at a workspace with the validation papers.
+CI tests the installed package without PYTHONPATH. Optional hook configuration uses the activated environment;
+hook installation is not required. Original-work attribution is retained in `pyproject.toml`.
+
+Retained legacy names have specific scopes: `REVIEWER_CONFIG` overrides extraction/rendering settings;
+`REVIEWER_SCRATCH_BASE` supports internal stores opened without an explicit run directory;
+`REVIEWER_WORKSPACE` enables optional real-paper tests when it points at the validation corpus.
+The running server does not need that corpus, reviewer forms, notes or an external workspace.
+
+
+## Local verification and remaining scope
+
+MCP-10 packaging checks use isolated editable and wheel installations, with import/resource and console stdio
+smoke checks outside the checkout and without PYTHONPATH. MCP-11A exercises the installed console command
+with a 25-page synthetic PDF: negotiated initialization/discovery, exactly six tools, described parameters,
+truthful annotations, complete page/section continuation, search/catalog pagination, canonical/page IDs,
+repeatable deterministic access, clean protocol output and process cleanup. It requires no reviewer forms,
+notes, external corpus or visual configuration. Existing document/run isolation and fake-client visual tests remain.
+
+Local validation uses Windows and the existing CPython 3.14.3 environment; Python 3.12 and POSIX execution
+were not separately validated in this batch. The final suite ran 122 tests: 116 passed, one known Windows
+store-permission assertion failed and five real-corpus tests were skipped. Ruff, Basedpyright and Vulture
+passed; details and logs are recorded in TODO/HISTORY. Live visual endpoints, scientific acceptance and consumer
+integration remain unverified; MCP-11B is pending explicit owner authorization.

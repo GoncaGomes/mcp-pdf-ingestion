@@ -20,7 +20,8 @@ helper introduced in MCP-09A/B. PLAN distinguishes targets from available behavi
 
 ## Code map
 
-Source paths are under `src/reviewer_mcp/` until MCP-10. Verify current code and
+Distribution and console command: `mcp-pdf-ingestion`; import package: `mcp_pdf_ingestion`.
+Source paths are under `src/mcp_pdf_ingestion/`. Verify current code and
 update this map when responsibilities change. Keep shared extraction helpers when
 removing reviewer-only features.
 
@@ -35,7 +36,7 @@ removing reviewer-only features.
 | `crops.py` | Crop/full-page geometry, rendering, and lazy atomic PNG persistence/reuse under the bound run directory. |
 | `visual_inspection.py` | Single-call async visual helper, process-wide model serialization, response validation and atomic run-local diagnostics. |
 | `config.py`, `runner.py` | Settings (document configuration, lazy visual environment, section values) and process execution. |
-| `tests/pdf_fixtures.py`, `tests/` | Synthetic PDFs and unittest coverage. |
+| `tests/pdf_fixtures.py`, `tests/` | Synthetic PDFs, installed-console stdio contract, isolation and fake visual unittest coverage. |
 | Root `pyproject.toml` | Dependencies, package settings and entry point. |
 
 ## One assigned block per session
@@ -129,6 +130,8 @@ vulture
 git diff --check
 ```
 
+Activate the repository environment before using the console command `mcp-pdf-ingestion` or optional hooks.
+No PYTHONPATH is required; tests import the installed package.
 Use environment-local executables and quote paths as required by the actual shell.
 Editable installation supplies the source package; do not assume Bash or Unix-only
 venv paths on Windows. Record skipped corpus tests, unavailable commands and

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pymupdf as fitz
 
-from reviewer_mcp.config import DocumentConfig, load_document_config
+from mcp_pdf_ingestion.config import DocumentConfig, load_document_config
 
 CONFIG_VARS = ("PDF_INGESTION_PDF", "PDF_INGESTION_RUN_DIR")
 

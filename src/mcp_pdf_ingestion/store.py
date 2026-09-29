@@ -22,12 +22,12 @@ from typing import Any
 
 import pymupdf as fitz
 
-from reviewer_mcp.assets import build_assets
-from reviewer_mcp.config import scratch_base
-from reviewer_mcp.document import extract, measure
-from reviewer_mcp.heuristics import DIGEST as HEURISTICS_DIGEST
-from reviewer_mcp.indexes import build_indexes
-from reviewer_mcp.structure import build_structure
+from mcp_pdf_ingestion.assets import build_assets
+from mcp_pdf_ingestion.config import scratch_base
+from mcp_pdf_ingestion.document import extract, measure
+from mcp_pdf_ingestion.heuristics import DIGEST as HEURISTICS_DIGEST
+from mcp_pdf_ingestion.indexes import build_indexes
+from mcp_pdf_ingestion.structure import build_structure
 
 EXTRACTOR_VERSION = "32"
 MAX_OPEN_STORES = 8

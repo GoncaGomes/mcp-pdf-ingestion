@@ -1,22 +1,25 @@
-"""Tool contract and behaviour of the reviewer-mcp server on synthetic submissions."""
+"""Tool contract and behaviour of the mcp-pdf-ingestion server on synthetic submissions."""
 
 import asyncio
 import json
 import os
-import sys
+import sysconfig
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from unittest import mock
 
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
 from fastmcp.exceptions import ToolError
-from pdf_fixtures import IsolatedTestCase, build_fixture, write_workspace
+from mcp.client import stdio as sdk_stdio
+from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, KNOWN_PROTOCOL_VERSIONS
+from pdf_fixtures import IsolatedTestCase, build_contract_pdf, build_fixture, write_workspace
 from test_reading import changed_cursor
 from test_visual_inspection import ENV, FakeClient, completion
 
-from reviewer_mcp import reading, server, visual_inspection
-from reviewer_mcp.store import PaperStore, close_all
+from mcp_pdf_ingestion import reading, server, visual_inspection
+from mcp_pdf_ingestion.store import PaperStore, close_all
 
 TOOLS = {
     "get_paper_overview",
@@ -113,24 +116,156 @@ class TestContract(ServerCase):
         for name in ("read_section", "search_paper", "list_assets"):
             self.assertEqual(hints(name), (True, False, True), name)
 
-    def test_protocol_negotiated_over_stdio(self):
-        paper = build_fixture("ieee_single", self.workspace / "papers").name
-        env = dict(os.environ)
-        env["PDF_INGESTION_PDF"] = str(self.workspace / "papers" / paper)
-        env["PDF_INGESTION_RUN_DIR"] = str(self.tmp_path / "run")
 
-        async def negotiate(mode):
-            transport = StdioTransport(
-                command=sys.executable,
-                args=["-c", "from reviewer_mcp.server import main; main()"],
-                env=env,
-            )
-            async with Client(transport, mode=mode) as client:
-                return client.protocol_version, len(await client.list_tools())
+class TestStdioContract(IsolatedTestCase):
+    def test_installed_console_contract_and_negotiation(self):
+        pdf = build_contract_pdf(self.workspace / "contract evidence.pdf")
+        run_dir = self.tmp_path / "stdio run"
+        self.addCleanup(close_all)
+        store = PaperStore.open(pdf, run_dir=self.tmp_path / "expected")
+        expected_pages = {p["page"]: p["text"] for p in store.pages()}
+        document_id = store.meta()["fingerprint"]
+        section_id = next(s["id"] for s in store.outline() if s["title"] == "Evidence")
+        expected_section = "\n\n".join(p["text"] for p in store.section_paragraphs(section_id))
+        close_all()
+        command = Path(sysconfig.get_path("scripts")) / (
+            "mcp-pdf-ingestion.exe" if os.name == "nt" else "mcp-pdf-ingestion"
+        )
+        self.assertTrue(command.is_file(), "install the project in the active environment first")
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k.upper() != "PYTHONPATH"
+            and not k.startswith(("REVIEWER_", "PDF_INGESTION_", "SKYNET_", "VISUAL_INSPECTION_"))
+        }
+        env.update(PDF_INGESTION_PDF=str(pdf), PDF_INGESTION_RUN_DIR=str(run_dir))
+        processes = []
+        create_process = sdk_stdio._create_platform_compatible_process
 
-        # 2026-07-28 is negotiated with server/discover; initialize remains for handshake-era clients
-        self.assertEqual(asyncio.run(negotiate("auto")), ("2026-07-28", len(TOOLS)))
-        self.assertEqual(asyncio.run(negotiate("legacy"))[0], "2025-11-25")
+        async def track_process(*args, **kwargs):
+            # Observe process lifetime only; use the SDK's transport and negotiation unchanged.
+            process = await create_process(*args, **kwargs)
+            processes.append(process)
+            return process
+
+        async def scenario():
+            for mode in ("legacy", "auto"):
+                transport = StdioTransport(
+                    command=str(command),
+                    args=[],
+                    env=env,
+                    cwd=str(self.workspace),
+                    keep_alive=False,
+                    log_file=self.tmp_path / "server.stderr.log",
+                )
+                async with Client(transport, mode=mode) as client:
+                    self.assertIn(client.protocol_version, KNOWN_PROTOCOL_VERSIONS)
+                    self.assertEqual(client.server_info.name, "mcp-pdf-ingestion")
+                    if mode == "legacy":
+                        self.assertIsNotNone(client.initialize_result)
+                        self.assertIn(client.protocol_version, HANDSHAKE_PROTOCOL_VERSIONS)
+                        self.assertEqual({t.name for t in await client.list_tools()}, TOOLS)
+                        continue
+                    tools = {t.name: t for t in await client.list_tools()}
+                    self.assertEqual(set(tools), TOOLS)
+                    for name, tool in tools.items():
+                        self.assertNotIn("paper", tool.input_schema["properties"])
+                        for field, schema in tool.input_schema["properties"].items():
+                            self.assertTrue(schema.get("description"), f"{name}.{field}")
+                        hints = tool.annotations
+                        self.assertEqual(
+                            (hints.read_only_hint, hints.idempotent_hint),
+                            (False, False) if name == "get_asset" else (True, True),
+                        )
+                        self.assertFalse(hints.destructive_hint)
+                    question = tools["get_asset"].input_schema["properties"]["question"]
+                    self.assertNotIn("question", tools["get_asset"].input_schema.get("required", []))
+                    self.assertIn({"type": "null"}, question["anyOf"])
+                    self.assertIn("visual", tools["get_asset"].description.lower())
+
+                    async def call(name, **arguments):
+                        result = await client.call_tool(name, arguments)
+                        self.assertTrue(all(c.type == "text" for c in result.content))
+                        value = json.loads(result.content[0].text)
+                        self.assertEqual(value["document_id"], document_id)
+                        return value
+
+                    async def traverse(name, arguments, key):
+                        first = reply = await call(name, **arguments)
+                        self.assertIsNotNone(first["next_cursor"], f"{name} must actually paginate")
+                        items, cursors, second = [], set(), None
+                        for _ in range(100):
+                            items.extend(reply[key])
+                            cursor = reply["next_cursor"]
+                            if cursor is None:
+                                break
+                            self.assertNotIn(cursor, cursors)
+                            cursors.add(cursor)
+                            reply = await call(name, **arguments, cursor=cursor)
+                            if second is None:
+                                second = reply
+                        else:
+                            self.fail(f"{name} traversal did not terminate")
+                        self.assertEqual(await call(name, **arguments, cursor=first["next_cursor"]), second)
+                        return first, items
+
+                    view = await call("get_paper_overview")
+                    self.assertEqual((view["paper"], view["pdf_pages"]), (pdf.name, 25))
+                    self.assertEqual(view["title"], "Synthetic PDF Evidence Contract")
+                    self.assertEqual([s["title"] for s in view["outline"]], ["Evidence", "Closing"])
+                    self.assertEqual(view["outline"][0]["id"], section_id)
+                    first_read, fragments = await traverse("read_pages", {}, "fragments")
+                    actual = {}
+                    for fragment in fragments:
+                        page = fragment["page"]
+                        actual[page] = actual.get(page, "") + fragment["text"]
+                    self.assertEqual(actual, expected_pages)
+                    _, fragments = await traverse("read_section", {"section_id": section_id}, "fragments")
+                    self.assertEqual("".join(f["text"] for f in fragments), expected_section)
+                    self.assertEqual({f["page"] for f in fragments}, set(range(1, 25)))
+                    search, hits = await traverse("search_paper", {"query": "Contractmarker"}, "hits")
+                    self.assertEqual(len(hits), search["total_hits"])
+                    self.assertEqual(len(hits), 24 * 6)
+                    self.assertEqual({h["page"] for h in hits}, set(range(1, 25)))
+                    self.assertTrue(all(h["section_id"] == section_id and h["snippet"] for h in hits))
+                    first_catalog, items = await traverse("list_assets", {}, "items")
+                    self.assertEqual(len(items), first_catalog["total_assets"])
+                    self.assertEqual(first_catalog["counts"], {"figure": 24})
+                    self.assertEqual(len({a["id"] for a in items}), 24)
+                    _, pages = await traverse("list_assets", {"kind": "page"}, "items")
+                    self.assertEqual([a["id"] for a in pages], [f"page:{n}" for n in range(1, 26)])
+                    retrieved = []
+                    for item in items:
+                        detail = await call("get_asset", asset_id=item["id"])
+                        self.assertEqual((detail["id"], detail["first_page"]), (item["id"], item["first_page"]))
+                        self.assertEqual(detail["visual"]["status"], "not_requested")
+                        retrieved.append(detail)
+                    for page in (1, 25):
+                        detail = await call("get_asset", asset_id=f"page:{page}", question=None)
+                        self.assertEqual(detail["content"], expected_pages[page])
+                        self.assertEqual(detail["visual"]["status"], "not_requested")
+                    for _ in range(8):
+                        self.assertEqual(await call("get_asset", asset_id=items[0]["id"]), retrieved[0])
+                        self.assertEqual(await call("read_pages"), first_read)
+                    self.assertEqual(await call("get_paper_overview"), view)
+                    self.assertEqual(await call("read_pages"), first_read)
+                    self.assertEqual(await call("get_asset", asset_id=items[0]["id"]), retrieved[0])
+                    self.assertEqual(await call("list_assets"), first_catalog)
+                self.assertIsNone(transport._session)
+
+        with (
+            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.object(sdk_stdio, "_create_platform_compatible_process", side_effect=track_process),
+            self.assertNoLogs("mcp.client.stdio", level="ERROR"),
+        ):
+            asyncio.run(asyncio.wait_for(scenario(), 90))
+        self.assertEqual(len(processes), 2)
+        self.assertTrue(all(p.returncode is not None for p in processes), "stdio subprocess leaked")
+        self.assertFalse((run_dir / "images").exists())
+        self.assertFalse((run_dir / "inspections").exists())
+        self.assertFalse((self.workspace / "forms").exists())
+        self.assertFalse((self.workspace / "base_review.md").exists())
+        self.assertFalse(list(self.workspace.rglob("*.notes")))
 
 
 class TestBareWorkspace(IsolatedTestCase):
@@ -347,11 +482,13 @@ class TestAssets(ServerCase):
         self.bind_paper("ieee_single")
         asset_id = self.asset_id("figure:1")
         self.assertEqual(set(server.crops.settings()), {"max_side"})
-        with mock.patch.dict(os.environ, {name: "" for name in ENV}), \
-                mock.patch.object(server.crops, "settings") as settings, \
-                mock.patch.object(server.crops, "cached_png") as cached, \
-                mock.patch.object(visual_inspection, "load_visual_config") as config, \
-                mock.patch.object(visual_inspection, "AsyncOpenAI") as model:
+        with (
+            mock.patch.dict(os.environ, {name: "" for name in ENV}),
+            mock.patch.object(server.crops, "settings") as settings,
+            mock.patch.object(server.crops, "cached_png") as cached,
+            mock.patch.object(visual_inspection, "load_visual_config") as config,
+            mock.patch.object(visual_inspection, "AsyncOpenAI") as model,
+        ):
             result = run(lambda client: client.call_tool("get_asset", {"asset_id": asset_id}))
             detail = json.loads(result.content[0].text)
             self.assertEqual(detail["visual"]["status"], "not_requested")
@@ -394,16 +531,21 @@ class TestAssets(ServerCase):
 class TestCatalog(ServerCase):
     def test_page_catalog_is_lazy_paginated_and_filtered(self):
         self.bind_paper("ieee_single")
-        with mock.patch.object(server.crops, "crop_png") as crop, \
-                mock.patch.object(server.crops, "describe_region") as describe, \
-                mock.patch.object(server, "ASSET_PAGE_SIZE", 3):
+        with (
+            mock.patch.object(server.crops, "crop_png") as crop,
+            mock.patch.object(server.crops, "describe_region") as describe,
+            mock.patch.object(server, "ASSET_PAGE_SIZE", 3),
+        ):
             items = self.catalog(kind="page")
             self.assertEqual([item["id"] for item in items], [f"page:{p}" for p in range(1, 18)])
             self.assertTrue(all("content" not in item and "text" not in item for item in items))
             self.assertEqual(server.list_assets(kind="page")["counts"], {"page": 17})
             self.assertFalse(any(i["kind"] == "page" for i in self.catalog()))
-            for args, expected in (({"first_page": 5}, [5]), ({"last_page": 4}, [1, 2, 3, 4]),
-                                   ({"first_page": 4, "last_page": 8}, list(range(4, 9)))):
+            for args, expected in (
+                ({"first_page": 5}, [5]),
+                ({"last_page": 4}, [1, 2, 3, 4]),
+                ({"first_page": 4, "last_page": 8}, list(range(4, 9))),
+            ):
                 self.assertEqual([i["first_page"] for i in self.catalog(kind="page", **args)], expected)
             cursor = server.list_assets(kind="page")["next_cursor"]
             self.assertEqual(server.list_assets(cursor=cursor), server.list_assets(cursor=cursor, kind="page"))
@@ -566,8 +708,9 @@ class TestVisualAssets(ServerCase):
         request = self.fake.create.call_args_list[0].kwargs
         image = request["messages"][1]["content"][2]["image_url"]["url"]
         self.assertEqual(base64.b64decode(image.split(",")[1]), selected_png)
-        self.assertEqual(record["prompt"]["context"]["render"]["requested_bounds"],
-                         [item[k] for k in ("x0", "y0", "x1", "y1")])
+        self.assertEqual(
+            record["prompt"]["context"]["render"]["requested_bounds"], [item[k] for k in ("x0", "y0", "x1", "y1")]
+        )
 
     def test_full_page_empty_text_and_invalid_ids_or_question(self):
         _, store = server._open()
@@ -585,8 +728,11 @@ class TestVisualAssets(ServerCase):
         with mock.patch.object(server.crops, "cached_png") as cached:
             for question in ("", "  ", "\n\t", 4):
                 with self.subTest(question=question):
-                    response = run(lambda c, question=question: c.call_tool(
-                        "get_asset", {"asset_id": "page:1", "question": question}, raise_on_error=False))
+                    response = run(
+                        lambda c, question=question: c.call_tool(
+                            "get_asset", {"asset_id": "page:1", "question": question}, raise_on_error=False
+                        )
+                    )
                     self.assertTrue(response.is_error)
             cached.assert_not_called()
         self.assertEqual(self.fake.create.await_count, 1)
@@ -597,13 +743,21 @@ class TestVisualAssets(ServerCase):
         asset_id = f"segment:{item['segment']}/{item['id']}"
         first = item["page"]
         with store.con:
-            store.con.execute("UPDATE assets SET last_page = ? WHERE segment = ? AND id = ?",
-                              (first + 2, item["segment"], item["id"]))
-        for bounds in ((-10, -5, 80, 40), (9000, 9000, 9100, 9100), (30, 30, 10, 10),
-                       (0, 0, float("inf"), 30), (None, 0, 30, 30)):
+            store.con.execute(
+                "UPDATE assets SET last_page = ? WHERE segment = ? AND id = ?", (first + 2, item["segment"], item["id"])
+            )
+        for bounds in (
+            (-10, -5, 80, 40),
+            (9000, 9000, 9100, 9100),
+            (30, 30, 10, 10),
+            (0, 0, float("inf"), 30),
+            (None, 0, 30, 30),
+        ):
             with store.con:
-                store.con.execute("UPDATE assets SET x0=?, y0=?, x1=?, y1=? WHERE segment=? AND id=?",
-                                  (*bounds, item["segment"], item["id"]))
+                store.con.execute(
+                    "UPDATE assets SET x0=?, y0=?, x1=?, y1=? WHERE segment=? AND id=?",
+                    (*bounds, item["segment"], item["id"]),
+                )
             detail = self.call(asset_id)
             self.assertEqual(detail["content"], item["content"])
             self.assertEqual(detail["source_page_ids"], [f"page:{p}" for p in range(first, first + 3)])
@@ -624,8 +778,10 @@ class TestVisualAssets(ServerCase):
         self.fake.create.assert_awaited_once()
 
     def test_failures_preserve_content_and_are_distinguishable(self):
-        for error, status in ((OSError("private path"), "render_error"),
-                              (server.crops.ImagePersistenceError("private path"), "image_persistence_error")):
+        for error, status in (
+            (OSError("private path"), "render_error"),
+            (server.crops.ImagePersistenceError("private path"), "image_persistence_error"),
+        ):
             with mock.patch.object(server.crops, "cached_png", side_effect=error):
                 detail = self.call("page:1")
                 self.assertEqual(detail["visual"]["status"], status)
@@ -650,8 +806,9 @@ class TestVisualAssets(ServerCase):
         with mock.patch.object(visual_inspection, "inspect_image", side_effect=fail):
             with self.assertRaisesRegex(ToolError, "Synthetic awaited failure"):
                 asset("page:1", question="Test")
-            result = run(lambda c: c.call_tool("get_asset", {"asset_id": "page:1", "question": "Test"},
-                                              raise_on_error=False))
+            result = run(
+                lambda c: c.call_tool("get_asset", {"asset_id": "page:1", "question": "Test"}, raise_on_error=False)
+            )
             self.assertTrue(result.is_error)
             self.assertIn("Synthetic awaited failure", result.content[0].text)
 
@@ -677,8 +834,9 @@ class TestVisualAssets(ServerCase):
         self.fake.create.side_effect = respond
 
         async def requests(client):
-            return await asyncio.gather(*(client.call_tool("get_asset", {"asset_id": "page:1", "question": str(i)})
-                                          for i in range(4)))
+            return await asyncio.gather(
+                *(client.call_tool("get_asset", {"asset_id": "page:1", "question": str(i)}) for i in range(4))
+            )
 
         replies = run(requests)
         statuses = [json.loads(r.content[0].text)["visual"]["status"] for r in replies]

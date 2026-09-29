@@ -24,7 +24,7 @@ from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
 from pdf_fixtures import IsolatedTestCase
 
-SERVER_CODE = "from reviewer_mcp.server import main; main()"
+SERVER_CODE = "from mcp_pdf_ingestion.server import main; main()"
 TIMEOUT = 90  # seconds, per stdio probe or subprocess launch
 
 
@@ -56,9 +56,7 @@ def _build_encrypted_pdf(path: Path, user_pw: str = "binding-test-user-password"
     doc = fitz.open()
     doc.new_page().insert_text((72, 120), "Encrypted document.", fontsize=12)
     path.parent.mkdir(parents=True, exist_ok=True)
-    doc.save(
-        str(path), encryption=fitz.PDF_ENCRYPT_AES_128, user_pw=user_pw, owner_pw="binding-test-owner-password"
-    )
+    doc.save(str(path), encryption=fitz.PDF_ENCRYPT_AES_128, user_pw=user_pw, owner_pw="binding-test-owner-password")
     doc.close()
     return path
 
@@ -83,9 +81,7 @@ async def _serve(pdf: Path, run_dir: Path) -> tuple[dict, str]:
     async with Client(transport) as client:
         overview = json.loads((await client.call_tool("get_paper_overview", {})).content[0].text)
         # Explicit physical page range: no manuscript heuristics in this isolation check.
-        pages = (await client.call_tool("read_pages", {"first_page": 1, "last_page": 2})).content[
-            0
-        ].text
+        pages = (await client.call_tool("read_pages", {"first_page": 1, "last_page": 2})).content[0].text
     return overview, pages
 
 

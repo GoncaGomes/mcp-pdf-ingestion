@@ -13,23 +13,33 @@ from types import SimpleNamespace
 from unittest import mock
 
 import httpx2
-from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
+from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, AuthenticationError, InternalServerError
 from openai.types.chat import ChatCompletion
 from openai.types.completion_usage import CompletionUsage
 
-from reviewer_mcp import visual_inspection as visual
-from reviewer_mcp.config import load_visual_config
+from mcp_pdf_ingestion import visual_inspection as visual
+from mcp_pdf_ingestion.config import load_visual_config
 
-ENV = {"SKYNET_BASE_URL": "https://example.invalid/v1", "SKYNET_API_KEY": "fake-secret-key",
-       "VISUAL_INSPECTION_MODEL": "fake-visual-model", "VISUAL_INSPECTION_TIMEOUT_SECONDS": "5"}
+ENV = {
+    "SKYNET_BASE_URL": "https://example.invalid/v1",
+    "SKYNET_API_KEY": "fake-secret-key",
+    "VISUAL_INSPECTION_MODEL": "fake-visual-model",
+    "VISUAL_INSPECTION_TIMEOUT_SECONDS": "5",
+}
 
 
 def completion(content="Visible label A.", finish="stop", **message):
-    return ChatCompletion.model_validate({
-        "id": "fake-completion", "created": 0, "object": "chat.completion", "model": "fake-visual-model",
-        "choices": [{"index": 0, "finish_reason": finish,
-                     "message": {"role": "assistant", "content": content, **message}}],
-    })
+    return ChatCompletion.model_validate(
+        {
+            "id": "fake-completion",
+            "created": 0,
+            "object": "chat.completion",
+            "model": "fake-visual-model",
+            "choices": [
+                {"index": 0, "finish_reason": finish, "message": {"role": "assistant", "content": content, **message}}
+            ],
+        }
+    )
 
 
 class FakeClient:
@@ -58,15 +68,29 @@ class TestInspection(unittest.TestCase):
         self.factory = patch.start()
         self.addCleanup(patch.stop)
         self.png = b"synthetic-image-bytes-for-request-test"
-        self.context = {"document_id": "doc", "id": "segment:0/figure:1", "first_page": 2,
-                        "last_page": 4, "caption": "Fig. 1", "content": "Local text",
-                        "rendered_pages": [2], "visual_coverage": "partial",
-                        "render": {"clipped": True, "effective_bounds": [0, 0, 100, 50]},
-                        "limitations": ["Only page 2's clipped first region is available."]}
+        self.context = {
+            "document_id": "doc",
+            "id": "segment:0/figure:1",
+            "first_page": 2,
+            "last_page": 4,
+            "caption": "Fig. 1",
+            "content": "Local text",
+            "rendered_pages": [2],
+            "visual_coverage": "partial",
+            "render": {"clipped": True, "effective_bounds": [0, 0, 100, 50]},
+            "limitations": ["Only page 2's clipped first region is available."],
+        }
 
     def invoke(self):
-        return asyncio.run(visual.inspect_image(png=self.png, question="  What label is visible?\n",
-                           context=self.context, image_reference="images/doc/region.png", run_dir=self.root))
+        return asyncio.run(
+            visual.inspect_image(
+                png=self.png,
+                question="  What label is visible?\n",
+                context=self.context,
+                image_reference="images/doc/region.png",
+                run_dir=self.root,
+            )
+        )
 
     def diagnostic(self, result):
         path = self.root / "inspections" / (result["inspection_id"] + ".json")
@@ -77,8 +101,9 @@ class TestInspection(unittest.TestCase):
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["answer"], "Visible label A.")
         self.fake.create.assert_awaited_once()
-        self.factory.assert_called_once_with(base_url=ENV["SKYNET_BASE_URL"], api_key=ENV["SKYNET_API_KEY"],
-                                             timeout=5, max_retries=0)
+        self.factory.assert_called_once_with(
+            base_url=ENV["SKYNET_BASE_URL"], api_key=ENV["SKYNET_API_KEY"], timeout=5, max_retries=0
+        )
         request = self.fake.create.call_args.kwargs
         self.assertEqual(set(request), {"model", "stream", "timeout", "messages"})
         self.assertFalse(request["stream"])
@@ -107,10 +132,18 @@ class TestInspection(unittest.TestCase):
             return original(payload)
 
         for response, status in (
-            (completion(), "success"), (completion("  "), "empty"), (completion("partial", "length"), "truncated"),
+            (completion(), "success"),
+            (completion("  "), "empty"),
+            (completion("partial", "length"), "truncated"),
             (completion(None, refusal="No."), "refused"),
-            (completion(None, "tool_calls", tool_calls=[{"id": "x", "type": "function",
-              "function": {"name": "bad", "arguments": "{}"}}]), "invalid_response"),
+            (
+                completion(
+                    None,
+                    "tool_calls",
+                    tool_calls=[{"id": "x", "type": "function", "function": {"name": "bad", "arguments": "{}"}}],
+                ),
+                "invalid_response",
+            ),
         ):
             with self.subTest(status=status), mock.patch.object(visual, "_answer", side_effect=validate):
                 self.fake.create.return_value = response
@@ -126,10 +159,16 @@ class TestInspection(unittest.TestCase):
                 result = self.invoke()
                 self.assertEqual(result["status"], "configuration_error")
                 self.assertIn(name, result["reason"])
-                self.assertIsNone(self.diagnostic(result)["response"])
+                record = self.diagnostic(result)
+                self.assertIsNone(record["response"])
+                self.assertEqual(record["error_type"], "ValueError")
+                self.assertIsNone(record["http_status"])
+                self.assertEqual(record["outcome"]["reason"], "Invalid visual configuration.")
         for timeout in ("0", "-1", "nan", "inf", "-inf", "garbage"):
-            with self.subTest(timeout=timeout), mock.patch.dict(os.environ,
-                                                              {"VISUAL_INSPECTION_TIMEOUT_SECONDS": timeout}):
+            with (
+                self.subTest(timeout=timeout),
+                mock.patch.dict(os.environ, {"VISUAL_INSPECTION_TIMEOUT_SECONDS": timeout}),
+            ):
                 self.assertEqual(self.invoke()["status"], "configuration_error")
         self.factory.assert_not_called()
         with mock.patch.dict(os.environ, {"SKYNET_BASE_URL": "not a URL"}):
@@ -138,22 +177,65 @@ class TestInspection(unittest.TestCase):
         self.assertNotIn(ENV["SKYNET_API_KEY"], repr(load_visual_config()))
 
     def test_transport_api_timeout_failures_have_no_exception_secrets(self):
-        request = httpx2.Request("POST", ENV["SKYNET_BASE_URL"], headers={"Authorization": ENV["SKYNET_API_KEY"]})
-        for error, status in (
-            (APITimeoutError(request=request), "timeout"),
-            (APIConnectionError(request=request, message=ENV["SKYNET_API_KEY"]), "model_error"),
-            (APIStatusError(ENV["SKYNET_API_KEY"], response=httpx2.Response(500, request=request), body={}),
-             "model_error"),
+        request = httpx2.Request(
+            "POST", ENV["SKYNET_BASE_URL"] + "/private-request-path", headers={"Authorization": ENV["SKYNET_API_KEY"]}
+        )
+        for error, status, error_type, http_status in (
+            (APITimeoutError(request=request), "timeout", "APITimeoutError", None),
+            (
+                APIConnectionError(request=request, message="private-error-message"),
+                "model_error",
+                "APIConnectionError",
+                None,
+            ),
+            (
+                AuthenticationError(
+                    "private-error-message",
+                    response=httpx2.Response(401, request=request, headers={"x-private": "private-header"}),
+                    body={"error": "private-body"},
+                ),
+                "model_error",
+                "AuthenticationError",
+                401,
+            ),
+            (
+                InternalServerError(
+                    "private-error-message",
+                    response=httpx2.Response(500, request=request, headers={"x-private": "private-header"}),
+                    body={"error": "private-body"},
+                ),
+                "model_error",
+                "InternalServerError",
+                500,
+            ),
         ):
-            with self.subTest(status=status):
+            with self.subTest(error_type=error_type):
                 self.fake.create.reset_mock(side_effect=True)
                 self.fake.create.side_effect = error
                 result = self.invoke()
                 self.assertEqual(result["status"], status)
+                self.assertNotIn("answer", result)
+                self.assertNotIn("error_type", result)
+                self.assertNotIn("http_status", result)
                 self.fake.create.assert_awaited_once()
-                raw = json.dumps(self.diagnostic(result))
-                self.assertNotIn(ENV["SKYNET_API_KEY"], raw)
-                self.assertNotIn("Authorization", raw)
+                self.assertEqual(self.factory.call_args.kwargs["max_retries"], 0)
+                record = self.diagnostic(result)
+                self.assertEqual(record["error_type"], error_type)
+                self.assertEqual(record["http_status"], http_status)
+                self.assertEqual(record["outcome"]["status"], status)
+                self.assertNotIn("answer", record["outcome"])
+                self.assertIsNone(record["response"])
+                raw = json.dumps(record) + json.dumps(result)
+                for secret in (
+                    ENV["SKYNET_API_KEY"],
+                    ENV["SKYNET_BASE_URL"],
+                    "Authorization",
+                    "private-request-path",
+                    "private-error-message",
+                    "private-body",
+                    "private-header",
+                ):
+                    self.assertNotIn(secret, raw)
                 self.assertTrue(self.fake.closed)
 
     def test_required_write_failure_never_returns_success_or_id(self):
@@ -184,8 +266,7 @@ class TestInspection(unittest.TestCase):
             incoming = json.loads(source.read_text(encoding="utf-8"))
             if replacements == 2:
                 self.assertEqual(incoming["outcome"]["status"], "success")
-                self.assertEqual(json.loads(destination.read_text(encoding="utf-8"))["outcome"]["status"],
-                                 "received")
+                self.assertEqual(json.loads(destination.read_text(encoding="utf-8"))["outcome"]["status"], "received")
                 raise OSError("disk failed")
             original(source, destination)
 
@@ -235,8 +316,13 @@ class TestInspection(unittest.TestCase):
             self.fake.create.side_effect = blocked
 
             async def inspect():
-                return await visual.inspect_image(png=self.png, question="test", context=self.context,
-                                                  image_reference="images/test.png", run_dir=self.root)
+                return await visual.inspect_image(
+                    png=self.png,
+                    question="test",
+                    context=self.context,
+                    image_reference="images/test.png",
+                    run_dir=self.root,
+                )
 
             active = asyncio.create_task(inspect())
             await asyncio.wait_for(entered.wait(), 2)

@@ -268,7 +268,7 @@ class PaperBuilder:
                         page.insert_text(
                             (self.width - 0.04 * self.width, y), str(k + 1), fontsize=8 * self.scale, fontname="tiro"
                         )
-        self.doc.set_metadata({"producer": "reviewer-mcp fixture", "creator": "reviewer-mcp fixture"})
+        self.doc.set_metadata({"producer": "mcp-pdf-ingestion fixture", "creator": "mcp-pdf-ingestion fixture"})
         path.parent.mkdir(parents=True, exist_ok=True)
         self.doc.save(str(path))
         self.doc.close()
@@ -677,6 +677,30 @@ FORM = (
 )
 
 
+def build_contract_pdf(path: Path) -> Path:
+    """One long section and 24 figures exercise unmodified read/search/catalog budgets."""
+    builder = PaperBuilder()
+    for page in range(1, 25):
+        builder.new_page()
+        if page == 1:
+            builder.heading("Synthetic PDF Evidence Contract", size=16)
+            builder.heading("1 Evidence", size=12)
+        page_label = chr(96 + page)
+        for paragraph in range(6):
+            label = f"sample{page_label}{chr(97 + paragraph)}"
+            builder.paragraph(
+                f"Contractmarker {label} describes reproducible local evidence. "
+                f"The {label} observation belongs to physical page {page}. "
+                f"Readable {label} labels and explicit source positions support retrieval. "
+                f"Generated {label} text makes no scientific claim."
+            )
+        builder.figure(f"Figure {page}:", f"Synthetic panel {page_label} for contract verification.", height=45)
+    builder.new_page()
+    builder.heading("2 Closing", size=12)
+    builder.paragraph("Terminal evidence marks the end of the long section.")
+    return builder.save(path)
+
+
 def write_workspace(root: Path) -> Path:
     """Minimal workspace: base_review.md, forms for the fixture venues, papers/ and reports/."""
     (root / "forms").mkdir(parents=True, exist_ok=True)
@@ -694,10 +718,13 @@ def build_coloured_pages(path: Path, rotation: int = 0, cropped: bool = False) -
         page = doc.new_page(width=300, height=240)
         origin_x, origin_y = (40, 30) if cropped else (0, 0)
         width, height = (200, 120) if cropped else (300, 240)
-        for x, y, color in ((0, 0, (1, 0, 0)), (1, 0, (0, 1, 0)),
-                            (0, 1, (0, 0, 1)), (1, 1, (1, 1, 0))):
-            rect = fitz.Rect(origin_x + x * width / 2, origin_y + y * height / 2,
-                             origin_x + (x + 1) * width / 2, origin_y + (y + 1) * height / 2)
+        for x, y, color in ((0, 0, (1, 0, 0)), (1, 0, (0, 1, 0)), (0, 1, (0, 0, 1)), (1, 1, (1, 1, 0))):
+            rect = fitz.Rect(
+                origin_x + x * width / 2,
+                origin_y + y * height / 2,
+                origin_x + (x + 1) * width / 2,
+                origin_y + (y + 1) * height / 2,
+            )
             page.draw_rect(rect, color=None, fill=color)
         if cropped:
             page.set_cropbox(fitz.Rect(origin_x, origin_y, origin_x + width, origin_y + height))

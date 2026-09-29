@@ -4,7 +4,7 @@ import unittest
 
 from pdf_fixtures import IsolatedTestCase, build_fixture
 
-from reviewer_mcp.store import PaperStore, close_all
+from mcp_pdf_ingestion.store import PaperStore, close_all
 
 VARIANTS = (
     ("ieee_single", "ieee_single_8pt_letter"),

@@ -139,7 +139,8 @@ compact answer and diagnostic ID to the caller, not the entire raw response.
 
 ## 4. Tasks
 
-Execute in order. All source paths below are under `src/reviewer_mcp/` until MCP-10.
+Execute in order. Current source paths are under `src/mcp_pdf_ingestion/` (renamed in MCP-10);
+earlier implementation references used `src/reviewer_mcp/`.
 Each task includes focused tests and the checks/documentation workflow in AGENTS.
 Use existing libraries unless a task explicitly says otherwise.
 
@@ -566,6 +567,18 @@ model requests; diagnostic ID resolves under the run directory.
 
 **Suggested owner commit after acceptance:**
 `feat(mcp): support visual questions in get_asset`
+
+### Authorized final local batch (2026-09-29)
+
+Execute sequentially: visual review fixes, MCP-10, then MCP-11A. Stop before MCP-11B.
+Review fixes preserve prompt wording and public visual results, repair README separators,
+and persist only exception class plus nullable SDK HTTP status for visual failures.
+Verify timeout, connection, HTTP 401/500 with fake clients and focused Ruff/tests.
+MCP-10 additionally verifies isolated editable and wheel installs, packaged config resources,
+and installed-package smoke checks outside the checkout without PYTHONPATH. Keep dependency
+versions unchanged. MCP-11A uses the renamed console command and real pagination fixtures;
+retain document/run isolation and fake visual checks. Run full local checks once after MCP-11A.
+No Git mutations, live model calls or consumer integration are authorized by this batch.
 
 ### MCP-10 - Align package identity and local setup
 

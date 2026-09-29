@@ -11,8 +11,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from reviewer_mcp.heuristics import SAME_SIZE
-from reviewer_mcp.store import PaperStore
+from mcp_pdf_ingestion.heuristics import SAME_SIZE
+from mcp_pdf_ingestion.store import PaperStore
 
 # Reply budgets (characters or items), not layout heuristics.
 TITLE_BUDGET = 300

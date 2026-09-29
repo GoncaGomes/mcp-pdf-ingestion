@@ -21,7 +21,7 @@ from typing import Any
 import pymupdf as fitz
 from pymupdf.mupdf import FzErrorBase
 
-from reviewer_mcp.config import load_section
+from mcp_pdf_ingestion.config import load_section
 
 COORDINATE_SYSTEM = "pymupdf_unrotated_visible_page_points"
 Bounds = tuple[float, float, float, float]
@@ -131,8 +131,8 @@ def _png_metadata(data: bytes) -> dict[str, Any] | None:
         end = offset + 12 + size
         if end > len(data):
             raise ValueError("Incomplete PNG payload.")
-        kind = data[offset + 4:offset + 8]
-        payload = data[offset + 8:end - 4]
+        kind = data[offset + 4 : offset + 8]
+        payload = data[offset + 8 : end - 4]
         checksum = struct.unpack_from(">I", data, end - 4)[0]
         if zlib.crc32(kind + payload) != checksum:
             raise ValueError("Invalid PNG chunk checksum.")
@@ -141,7 +141,7 @@ def _png_metadata(data: bytes) -> dict[str, Any] | None:
         if kind == b"tEXt" and payload.startswith(_METADATA_KEY):
             if metadata is not None:
                 raise ValueError("Duplicate image metadata.")
-            metadata = json.loads(payload[len(_METADATA_KEY):])
+            metadata = json.loads(payload[len(_METADATA_KEY) :])
             if not isinstance(metadata, dict):
                 raise ValueError("Invalid image metadata.")
         if kind == b"IEND":
@@ -183,8 +183,15 @@ def _atomic_png(path: Path, data: bytes) -> None:
 
 
 def cached_png(
-    pdf: Path, page: int, bbox: Bounds | None, max_side: int, *, run_dir: Path,
-    document_id: str, asset_id: str, region: dict[str, Any],
+    pdf: Path,
+    page: int,
+    bbox: Bounds | None,
+    max_side: int,
+    *,
+    run_dir: Path,
+    document_id: str,
+    asset_id: str,
+    region: dict[str, Any],
 ) -> bytes:
     """Reuse only a matching, valid PNG under this run; no store/SQLite lock is held.
 
@@ -200,9 +207,15 @@ def cached_png(
         raise ValueError("max_side must be a positive integer.")
     path = run_dir / image_reference(document_id, asset_id)
     expected = {
-        "renderer_version": RENDERER_VERSION, "pymupdf_version": str(fitz.VersionBind),
-        "document_id": document_id, "asset_id": asset_id, "page": page,
-        "region": region, "max_side": max_side, "colorspace": "RGB", "alpha": False,
+        "renderer_version": RENDERER_VERSION,
+        "pymupdf_version": str(fitz.VersionBind),
+        "document_id": document_id,
+        "asset_id": asset_id,
+        "page": page,
+        "region": region,
+        "max_side": max_side,
+        "colorspace": "RGB",
+        "alpha": False,
     }
     with _LOCKS_GUARD:
         lock = _LOCKS.setdefault(path, threading.Lock())

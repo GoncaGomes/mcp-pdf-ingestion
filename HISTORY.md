@@ -473,6 +473,16 @@ Basedpyright/Vulture/diff clean after correcting two test closure lint findings.
 All model tests use fake clients, not a real endpoint. Existing venv reused.
 Batch proceeds to MCP-09B; owner acceptance of earlier tasks is unchanged.
 
+Review follow-up, 2026-09-29 (batch block 1): reflowed SYSTEM_PROMPT to the
+120-character source limit with exactly unchanged runtime text. Preserved the owner's
+four README separator repairs. Diagnostics now carry exception class `error_type`
+and nullable integer SDK `http_status`; exception text/bodies/headers/URLs are not
+persisted. Configuration diagnostics use a fixed reason while public guidance remains
+unchanged. Timeout, connection, HTTP 401/500 fake tests verify one request, metadata,
+absent answers and no sensitive leakage; cancellation/persistence coverage retained.
+Focused visual unittest: 10 passed; changed-file Ruff passed. Final batch suite below
+also covers the fixed configuration diagnostic reason. No live model request.
+
 ## MCP-09B - explicit get_asset questions (2026-09-28; review_pending)
 
 Final async signature is get_asset(asset_id, question=None), with text-only MCP results,
@@ -506,3 +516,50 @@ integration. No existing locked dependency changed version. Both tasks await own
 acceptance; no earlier acceptance inferred, no Git mutation, and no MCP-10 work.
 The diff check was also repeated successfully after recording the final documentation.
 Next: owner review; suggested owner commits remain in PLAN. Stopped after MCP-09B.
+
+
+## 2026-09-29 - MCP-10 - Final package identity (review_pending)
+
+Renamed distribution/console to mcp-pdf-ingestion and package to mcp_pdf_ingestion
+using filesystem edits only. Updated imports, build/type/dead-code paths, tests,
+neutral server identity, CI (no PYTHONPATH), optional shell-neutral hook command,
+README and AGENTS. Original attribution and used REVIEWER_* variables remain.
+Extraction, SQLite/schema/fingerprints, asset IDs, cursors, image-cache implementation
+and packaged config compare unchanged beyond imports. No migration or heuristic change.
+`uv lock --offline` changed only the project name/order; all dependency records compare
+identical to HEAD. Existing Windows CPython 3.14.3 environment retained.
+
+Isolated editable install and wheel build/install passed with locked dependencies.
+Both imports/config resources/console entry points and six-tool stdio overview smoke
+checks passed outside checkout without PYTHONPATH; wheel imports resolved to site-packages.
+The final wheel was rebuilt and smoke-checked after the configuration diagnostic edit.
+Focused unittest: test_init.py 2 passed, test_crops.py 11 passed; source/init Ruff passed.
+Logs: tmp/mcp-10-*.log; artifacts/environments under tmp/mcp-10. Full batch results below.
+
+## 2026-09-29 - MCP-11A - Complete local stdio contract (review_pending)
+
+Added a 25-page synthetic fixture using the existing builder, with one long section,
+144 searchable paragraphs and 24 figures. Real installed-console sessions verify native
+auto discovery and legacy initialization using the installed SDK's version registry,
+exactly six described tools and truthful annotations, identity/outline, complete
+page/section/search/catalog continuation, canonical/page IDs, repeated deterministic
+access without resets/quotas, clean protocol parsing and exited child processes.
+No reviewer forms, notes, corpus or visual settings are required. Existing isolation
+and fake-client visual integration tests remain. Focused server suite: 24 passed.
+Fixture text was varied after repeated rows were classified as running heads; the SDK
+registry import was corrected after one failed collection. No protocol/parser changes.
+
+Final batch checks (environment-local executables, full suite run once):
+- `.venv/Scripts/python.exe -m unittest discover -s tests -p 'test_*.py' -q`:
+  122 run, 116 passed, 1 failure, 5 corpus skips (exit 1).
+- Sole failure: pre-existing Windows test_store_location_permissions_and_cache chmod
+  assertion (511 != 448). No assertions weakened; no other failures or cleanup errors.
+- `.venv/Scripts/ruff.exe check .`: passed; `.venv/Scripts/basedpyright.exe`:
+  0 errors/warnings/notes; `.venv/Scripts/vulture.exe`: passed; `git diff --check`: passed.
+- Logs: tmp/mcp-10-11a-*.log. Final documentation whitespace checked separately.
+
+Windows CPython 3.14.3 verified; no separate Python 3.12/POSIX, real model endpoint,
+scientific or consumer integration validation. No Git state changes, hooks or publishing.
+MCP-10/MCP-11A await owner acceptance; MCP-11B remains pending. Suggested owner commits:
+`refactor(package): rename reviewer MCP to PDF ingestion` and
+`test(mcp): verify the complete stdio tool contract`. Neither was executed.

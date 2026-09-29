@@ -7,9 +7,9 @@ import binascii
 import json
 from typing import Any
 
-from reviewer_mcp.indexes import _join
-from reviewer_mcp.papers import ReviewError, page_span
-from reviewer_mcp.store import PaperStore
+from mcp_pdf_ingestion.indexes import _join
+from mcp_pdf_ingestion.papers import ReviewError, page_span
+from mcp_pdf_ingestion.store import PaperStore
 
 READ_BUDGET = 12_000  # characters per reply
 CURSOR_LIMIT = 4096

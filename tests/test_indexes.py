@@ -5,7 +5,7 @@ from pathlib import Path
 import pymupdf as fitz
 from pdf_fixtures import IsolatedTestCase, build_fixture
 
-from reviewer_mcp.store import PaperStore, close_all
+from mcp_pdf_ingestion.store import PaperStore, close_all
 
 REAL_WORKSPACE = os.environ.get("REVIEWER_WORKSPACE", "")
 ACCESS = Path(REAL_WORKSPACE) / "papers" / "Access-2026-41373_Proof_hi.pdf"

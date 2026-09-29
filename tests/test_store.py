@@ -9,11 +9,11 @@ from unittest import mock
 import pymupdf as fitz
 from pdf_fixtures import IsolatedTestCase, build_fixture
 
-from reviewer_mcp import store as store_module
-from reviewer_mcp.config import scratch_base
-from reviewer_mcp.document import extract
-from reviewer_mcp.heuristics import LINE_NUMBER_SEQUENCE
-from reviewer_mcp.store import PaperStore, close_all
+from mcp_pdf_ingestion import store as store_module
+from mcp_pdf_ingestion.config import scratch_base
+from mcp_pdf_ingestion.document import extract
+from mcp_pdf_ingestion.heuristics import LINE_NUMBER_SEQUENCE
+from mcp_pdf_ingestion.store import PaperStore, close_all
 
 REAL_WORKSPACE = os.environ.get("REVIEWER_WORKSPACE", "")
 

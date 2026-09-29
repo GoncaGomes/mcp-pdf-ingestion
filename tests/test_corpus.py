@@ -14,7 +14,7 @@ from pathlib import Path
 
 from pdf_fixtures import IsolatedTestCase
 
-from reviewer_mcp.store import PaperStore, close_all
+from mcp_pdf_ingestion.store import PaperStore, close_all
 
 REAL_WORKSPACE = os.environ.get("REVIEWER_WORKSPACE", "")
 ROMAN = ("I", "II", "III", "IV", "V", "VI", "VII")

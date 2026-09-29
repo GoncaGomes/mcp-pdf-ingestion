@@ -1,4 +1,4 @@
-"""reviewer-mcp: the tools for reading one configured PDF submission as evidence.
+"""mcp-pdf-ingestion: the tools for reading one configured PDF submission as evidence.
 
 Each server process binds to one configured PDF (``PDF_INGESTION_PDF``) with its derived data in an isolated run
 directory (``PDF_INGESTION_RUN_DIR``), loaded once at startup. The PDF is opened once into a deterministic store (text,
@@ -22,11 +22,11 @@ from fastmcp.exceptions import ToolError
 from mcp.types import TextContent
 from pydantic import Field
 
-from reviewer_mcp import crops, reading, visual_inspection
-from reviewer_mcp.config import DocumentConfig, load_document_config
-from reviewer_mcp.papers import ReviewError, overview
-from reviewer_mcp.runner import run_server
-from reviewer_mcp.store import PaperStore
+from mcp_pdf_ingestion import crops, reading, visual_inspection
+from mcp_pdf_ingestion.config import DocumentConfig, load_document_config
+from mcp_pdf_ingestion.papers import ReviewError, overview
+from mcp_pdf_ingestion.runner import run_server
+from mcp_pdf_ingestion.store import PaperStore
 
 INSTRUCTIONS = """\
 Read one PDF submission as evidence. The server is bound to one configured PDF; page numbers are PDF page numbers;
@@ -46,7 +46,7 @@ MENTION_CONTEXT = 100
 CAPTION_PREVIEW = 140
 ASSET_PAGE_SIZE = 20  # assets per catalog response
 
-mcp = FastMCP("reviewer", instructions=INSTRUCTIONS)
+mcp = FastMCP("mcp-pdf-ingestion", instructions=INSTRUCTIONS)
 
 # The document bound to this process: set once at startup (main) or once per in-process test; never reread.
 _DOCUMENT: DocumentConfig | None = None
@@ -69,6 +69,7 @@ def _agent_errors[F: Callable[..., Any]](func: F) -> F:
     """Report problems the caller can fix as tool errors whose message says what to do."""
 
     if inspect.iscoroutinefunction(func):
+
         @wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
@@ -176,8 +177,12 @@ def _asset_entry(item: dict[str, Any]) -> dict[str, Any]:
 
 def _page_entry(page: int) -> dict[str, Any]:
     return {
-        "id": f"page:{page}", "label": f"Page {page}", "kind": "page",
-        "first_page": page, "last_page": page, "region_available": True,
+        "id": f"page:{page}",
+        "label": f"Page {page}",
+        "kind": "page",
+        "first_page": page,
+        "last_page": page,
+        "region_available": True,
     }
 
 
@@ -272,9 +277,13 @@ def _resolve_asset(asset_id: str) -> tuple[Path, dict[str, Any], crops.Bounds | 
         reading.page_range(store.page_count, page, page)
         stored_page = store.pages(page, page)[0]
         detail = {
-            **_page_entry(page), "document_id": store.meta()["fingerprint"],
-            "content": stored_page["text"], "format": "text", "method": "page_text",
-            "text_source": stored_page["source"], "page_label": stored_page["label"],
+            **_page_entry(page),
+            "document_id": store.meta()["fingerprint"],
+            "content": stored_page["text"],
+            "format": "text",
+            "method": "page_text",
+            "text_source": stored_page["source"],
+            "page_label": stored_page["label"],
         }
         return pdf, detail, None
     assert match is not None
@@ -326,9 +335,12 @@ def _describe_asset(pdf: Path, detail: dict[str, Any], bbox: crops.Bounds | None
         region = crops.describe_region(pdf, first, bbox)
     else:
         region = {
-            "available": False, "reason": "No stored region is available.",
+            "available": False,
+            "reason": "No stored region is available.",
             "coordinate_system": crops.COORDINATE_SYSTEM,
-            "requested_bounds": None, "effective_bounds": None, "clipped": False,
+            "requested_bounds": None,
+            "effective_bounds": None,
+            "clipped": False,
         }
     detail["render"] = region
     detail["visual_available"] = region["available"]
@@ -337,7 +349,11 @@ def _describe_asset(pdf: Path, detail: dict[str, Any], bbox: crops.Bounds | None
 
 
 async def _asset_response(
-    pdf: Path, detail: dict[str, Any], bbox: crops.Bounds | None, question: str | None, run_dir: Path,
+    pdf: Path,
+    detail: dict[str, Any],
+    bbox: crops.Bounds | None,
+    question: str | None,
+    run_dir: Path,
 ) -> list[TextContent]:
     try:
         await asyncio.to_thread(_describe_asset, pdf, detail, bbox)
@@ -349,15 +365,24 @@ async def _asset_response(
         if not detail["visual_available"]:
             result = {"status": "unavailable", "reason": detail["render"]["reason"]}
         else:
+
             def render() -> bytes:
                 max_side = crops.settings()["max_side"]
                 detail["render_settings"] = {
-                    "max_side": max_side, "renderer_version": crops.RENDERER_VERSION,
-                    "colorspace": "RGB", "alpha": False,
+                    "max_side": max_side,
+                    "renderer_version": crops.RENDERER_VERSION,
+                    "colorspace": "RGB",
+                    "alpha": False,
                 }
                 return crops.cached_png(
-                    pdf, detail["first_page"], bbox, max_side, run_dir=run_dir,
-                    document_id=detail["document_id"], asset_id=detail["id"], region=detail["render"],
+                    pdf,
+                    detail["first_page"],
+                    bbox,
+                    max_side,
+                    run_dir=run_dir,
+                    document_id=detail["document_id"],
+                    asset_id=detail["id"],
+                    region=detail["render"],
                 )
 
             try:
@@ -369,23 +394,30 @@ async def _asset_response(
             else:
                 detail["rendered_pages"] = [detail["first_page"]]
                 detail["visual_coverage"] = (
-                    "partial" if detail["last_page"] > detail["first_page"] or detail["render"]["clipped"]
+                    "partial"
+                    if detail["last_page"] > detail["first_page"] or detail["render"]["clipped"]
                     else "single_page"
                 )
                 result = await visual_inspection.inspect_image(
-                    png=data, question=question, context=detail,
-                    image_reference=crops.image_reference(detail["document_id"], detail["id"]), run_dir=run_dir,
+                    png=data,
+                    question=question,
+                    context=detail,
+                    image_reference=crops.image_reference(detail["document_id"], detail["id"]),
+                    run_dir=run_dir,
                 )
     detail["visual"] = {
-        **result, "source_page_ids": detail["source_page_ids"], "rendered_pages": detail["rendered_pages"],
-        "visual_coverage": detail["visual_coverage"], "render": detail["render"],
+        **result,
+        "source_page_ids": detail["source_page_ids"],
+        "rendered_pages": detail["rendered_pages"],
+        "visual_coverage": detail["visual_coverage"],
+        "render": detail["render"],
         "limitations": detail["limitations"],
     }
     return [TextContent(type="text", text=json.dumps(detail, ensure_ascii=False))]
 
 
 def main() -> None:
-    """Console script entry point for reviewer-mcp: bind the configured document, then serve."""
+    """Console script entry point for mcp-pdf-ingestion: bind the configured document, then serve."""
     bind_document()
     run_server(mcp)
 

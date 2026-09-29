@@ -28,15 +28,15 @@ repos:
 
       - id: vulture
         name: vulture
-        entry: vulture src/reviewer_mcp
+        entry: vulture src/mcp_pdf_ingestion
         language: system
         files: '(\.py$|^pyproject\.toml$)'
         pass_filenames: false
 
       - id: unittest
         name: unittest (tests)
-        # the project venv holds the pinned dependencies (as CI's `pip install ".[dev]"`); a system python may not
-        entry: bash -c 'PY=python3; if [ -x venv/bin/python ]; then PY=venv/bin/python; fi; PYTHONPATH=src exec "$PY" -m unittest discover -s tests -p "test_*.py" -v'
+        # Activate the project environment before running these optional hooks.
+        entry: python -m unittest discover -s tests -p "test_*.py" -v
         language: system
         files: '(\.py$|^pyproject\.toml$)'
         pass_filenames: false

@@ -8,9 +8,9 @@ import pymupdf as fitz
 from pdf_fixtures import IsolatedTestCase, build_fixture
 from test_indexes import paragraph_pdf
 
-from reviewer_mcp import reading
-from reviewer_mcp.papers import ReviewError
-from reviewer_mcp.store import PaperStore, close_all
+from mcp_pdf_ingestion import reading
+from mcp_pdf_ingestion.papers import ReviewError
+from mcp_pdf_ingestion.store import PaperStore, close_all
 
 
 def changed_cursor(cursor, **changes):
