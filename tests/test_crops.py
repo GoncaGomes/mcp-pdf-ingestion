@@ -14,6 +14,31 @@ from mcp_pdf_ingestion.store import fingerprint
 
 
 class TestCrops(IsolatedTestCase):
+    def test_decimal_coordinates_and_visible_boundaries_are_not_clipped(self):
+        pdf = self.tmp_path / "decimal.pdf"
+        with fitz.open() as doc:
+            doc.new_page(width=595.276, height=841.89)
+            doc.save(pdf)
+        with fitz.open(pdf) as doc:
+            visible = doc[0].rect * doc[0].derotation_matrix
+        decimal = (167.26, 196.53, 338.94, 334.57)
+        for bbox in (decimal, tuple(visible)):
+            with self.subTest(bounds=bbox):
+                info = crops.describe_region(pdf, 1, bbox)
+                self.assertTrue(info["available"])
+                self.assertFalse(info["clipped"])
+                self.assertEqual(info["requested_bounds"], list(bbox))
+                self.assertEqual(info["effective_bounds"], list(fitz.Rect(bbox) & visible))
+                self.assertTrue(crops.crop_png(pdf, 1, bbox, 160).startswith(b"\x89PNG"))
+        # Even a small genuine overrun must not be hidden by rounding or tolerance.
+        bbox = (-0.000001, decimal[1], decimal[2], decimal[3])
+        info = crops.describe_region(pdf, 1, bbox)
+        self.assertTrue(info["available"])
+        self.assertTrue(info["clipped"])
+        self.assertEqual(info["requested_bounds"], list(bbox))
+        self.assertEqual(info["effective_bounds"], list(fitz.Rect(bbox) & visible))
+        self.assertEqual(info["effective_bounds"][0], 0)
+
     def test_full_pages_and_selected_content_with_rotation_and_cropbox(self):
         colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)]
         for cropped in (False, True):

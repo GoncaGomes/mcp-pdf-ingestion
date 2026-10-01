@@ -32,3 +32,4 @@ tmp/
 reports/
 probe-runs/
 probe-*.json
+*.zip

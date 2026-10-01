@@ -609,3 +609,44 @@ Real visual/agent model execution, scientific/manual review, Linux/Python 3.12
 execution and future CI runs remain unverified; corpus tests remain opt-in.
 No Git mutations, commits, hooks, consumer edits or architecture report.
 Suggested owner commit: feat(probes): add optional direct MCP and Agents SDK paper checks.
+
+### 2026-09-30 - MCP-11B targeted review fixes (manual rerun pending)
+
+Crop clipping now checks containment in the unrotated visible page before the
+existing intersection; decimal rounding does not imply clipping. Requested/effective
+bounds, rotation, CropBox, outside/inverted errors and PNG metadata validation remain.
+Regression covers the reported decimal rectangle, exact page boundaries and a real
+small overrun; existing rotated/CropBox/error/cache tests still pass. Corrected
+metadata may invalidate an older falsely-clipped entry once without deleting caches
+or changing document fingerprints/schema.
+
+Probe CLI default/help were already 600 seconds; environment expectation and active
+README/PLAN now match the owner's default and unchanged +60-second MCP margin.
+Production visual settings remain host-supplied. Agent completion requires a
+non-blank final answer and at least one visual success. Recorded unavailable crops
+may be explicitly followed by successful page inspection; tool exceptions, other
+visual failures and MaxTurnsExceeded still fail. Direct unavailable inspection
+still fails. Instructions choose one figure/variant, request its source page when
+needed, finish a concise summary and report uncertainties/limitations. Six tools,
+autonomous selection, eight-turn default/override and zero retries remain.
+
+New focused checks on Windows CPython 3.14.3: test_crops.py 12 passed;
+test_probe_mcp.py 21 passed, using synthetic PDFs and fake model/tool clients.
+CLI inspect/agent --help and editable import verified against the active .venv;
+optional dependencies already present, no installation or upgrades performed.
+Final checks ran once on Windows CPython 3.14.3:
+- `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py" -q`:
+  exit 0, 144 run, 139 passed, 5 opt-in REVIEWER_WORKSPACE corpus skips.
+- `.venv/Scripts/ruff.exe check .`: exit 0, passed.
+- `.venv/Scripts/basedpyright.exe`: exit 0, 0 errors/warnings/notes.
+- `.venv/Scripts/vulture.exe`: exit 0, passed.
+- `git diff --check`: exit 0, no whitespace errors (Git emitted LF/CRLF notices).
+Logs: tmp/mcp-11b-review-fixes-*.log. Expected negative-tool diagnostics appeared;
+no environment-specific test failure occurred. Linux/Python 3.12 and CI execution
+remain unverified for these fixes.
+
+README uses a new shared run directory, probe-runs/microstrip-review-fixes;
+earlier evidence is intact and no manual commands were executed.
+MCP-11B stays in_progress pending a successful owner-run live rerun
+and manual evidence review. Preserved unrelated .gitignore change; no Git mutations,
+extraction heuristics, consumer edits, live requests or scientific acceptance.

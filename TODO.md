@@ -1,13 +1,13 @@
 # MCP PDF ingestion task status
 
-Updated: 2026-09-29. Scope: this repository only.
+Updated: 2026-09-30. Scope: this repository only.
 Read `AGENTS.md` and the selected task in `PLAN.md` before editing.
 
 ## Current work
 
 - MCP-01: `done`, consistent with the existing owner-maintained task table.
 - MCP-02: `done`.
-- Assigned batch: MCP-11B.1 direct probes -> MCP-11B.2 SDK/Windows/docs (authorized 2026-09-29); no live requests.
+- Assigned block: MCP-11B targeted review fixes (authorized 2026-09-30); no live requests.
 - MCP-03, MCP-04 and MCP-05: `done`; implementation and batch validation complete.
 - MCP-06 and MCP-07: `done`; implementation and batch validation complete.
 - MCP-08A and MCP-08B: `done`; implementation and batch validation complete.
@@ -16,15 +16,15 @@ Read `AGENTS.md` and the selected task in `PLAN.md` before editing.
 - MCP-11B: `in_progress`; implementation checks passed, real execution/manual review pending.
 
 Statuses: `pending`, `in_progress`, `review_pending`, `done`, `blocked`.
-Only explicit owner acceptance permits `done`. This assigned batch may continue
-sequentially after focused checks; full checks run once after MCP-11B.2.
+Only explicit owner acceptance permits `done`. The current targeted review block
+runs focused crop/probe checks and all repository checks once at its final boundary.
 
 ## Thread and commit tracking
 
 One task row is a deliverable, usually one owner-made commit. A task can span
 several assigned blocks/threads. Intermediate blocks leave the parent `in_progress`;
 only the final block can mark it `review_pending`. Owner acceptance permits `done`.
-Do not automatically start an unassigned block; MCP-11B.1/11B.2 implementation is authorized, not live requests.
+Do not automatically start an unassigned block; targeted review fixes are authorized, not live requests.
 Use PLAN for scope and commit messages.
 
 Observed 2026-09-29: branch `feat/pdf-evidence-tool`; initial local change only
@@ -86,14 +86,15 @@ means its specified checks passed; it does not mean owner acceptance of the task
 
 ## Resume note
 
-- MCP-11B.1/11B.2 implementation complete; parent in_progress, live block 11B.3 pending.
-- Added scripts/probe_mcp.py: catalog/inspect/agent, local dotenv, explicit models/timeouts, failure records.
-- Added optional probes extra/lock, synthetic/mock tests, Windows CI and POSIX-only store-mode assertion.
-- Preserved existing .env ignore; ignored probe outputs; no production server/cache/heuristic changes.
-- SDK 0.22.3 inspected locally; required websockets adjustment 17.1 -> 16.1.1, no unrelated upgrades.
-- Windows CPython 3.14.3: focused test_probe_mcp.py 12 passed; CLI help and real PDF catalog passed (23 assets, 2 pages).
-- Fake agent checks cover zero retries/tracing, six tools, visual evidence and cleanup; actual SDK stdio tested without models.
-- README/PLAN/AGENTS updated; MCP-10/MCP-11A contradictory done statuses reconciled to review_pending.
-- Final full discovery: 135 run, 130 passed, 5 corpus skips; includes 13 probe tests. Ruff/Basedpyright/Vulture/diff passed.
-- Exact checks: .venv/Scripts/python.exe -m unittest discover -s tests -p test_*.py -q; .venv/Scripts/{ruff.exe check .,basedpyright.exe,vulture.exe}; git diff --check; logs tmp/mcp-11b-*.log.
-- No live requests, consumer work, owner acceptance or Git mutations. Next: owner manual commands for 11B.3 and review; no further implementation block authorized.
+- MCP-11B targeted review fixes implemented; parent in_progress, live block 11B.3 pending.
+- crops._region uses visible.contains(rect) before intersection; bounds/rotation/errors/cache validation retained.
+- scripts/probe_mcp.py requires final text plus visual success; unavailable recovery remains fully recorded.
+- Geometry instructions choose one figure/variant, explicitly request its source page if needed and finish with uncertainties.
+- Probe default/help already 600; tests/README/PLAN now match; +60 MCP margin and eight-turn default retained.
+- Focused: .venv/Scripts/python.exe -m unittest discover -s tests -p test_crops.py -q: 12 passed; same with test_probe_mcp.py: 21 passed.
+- Final: .venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py" -q: 144 run, 139 passed, 5 corpus skips.
+- .venv/Scripts/ruff.exe check ., basedpyright.exe, vulture.exe and git diff --check passed. Logs: tmp/mcp-11b-review-fixes-*.log.
+- Windows checks passed; corpus needs REVIEWER_WORKSPACE; Linux/Python 3.12 unverified. CLI help/editable import/probe installation verified.
+- README documents unused shared probe-runs/microstrip-review-fixes and review outputs; earlier evidence retained.
+- Preserved unrelated .gitignore change; no dependency changes, live requests, consumer edits, Git mutations or owner acceptance.
+- Next: owner reruns the documented 600-second commands and returns JSON/PNG evidence for review; no further block authorized.

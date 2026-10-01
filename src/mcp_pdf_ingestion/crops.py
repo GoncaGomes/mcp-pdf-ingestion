@@ -72,11 +72,12 @@ def _region(page: Any, bbox: Bounds | None) -> dict[str, Any]:
     if rect.is_empty or not rect.is_valid:
         result["reason"] = "Bounds must describe a non-empty, non-inverted region."
         return result
+    clipped = not visible.contains(rect)
     effective = rect & visible
     if effective.is_empty:
         result["reason"] = "The requested region lies fully outside the visible page."
         return result
-    result.update(available=True, effective_bounds=list(effective), clipped=rect != effective)
+    result.update(available=True, effective_bounds=list(effective), clipped=clipped)
     return result
 
 

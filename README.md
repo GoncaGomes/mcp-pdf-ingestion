@@ -85,7 +85,8 @@ The result remains MCP text only; image bytes are internal. `include_image` and 
 `render` records requested/effective bounds, coordinate system, page geometry, clipping and availability/reason.
 Bounds use `pymupdf_unrotated_visible_page_points`: points from the visible page's top-left, x right and y down,
 before rotation, matching stored PyMuPDF extraction bounds. They are not raw MediaBox coordinates. The renderer
-intersects in unrotated space, then rotates the clip into displayed orientation. Full-page images use the visible
+checks clipping by containment before intersection, so intersection rounding alone never marks a crop clipped.
+It intersects in unrotated space, then rotates the clip into displayed orientation. Full-page images use the visible
 CropBox, including rotation. `images.max_side` controls the longest image side in pixels and must be positive.
 Non-finite source coordinates are represented as strings to keep metadata valid JSON. Missing, inverted,
 non-finite or fully outside regions return an unavailable reason and preserve text; no replacement crop is chosen.
@@ -111,6 +112,8 @@ atomic replacement. Per-asset locks coalesce concurrent threads without holding 
 may render redundantly but cannot expose a partially written entry. Incomplete/corrupt/mismatched entries are cache
 misses; render/write failures are reported and preserve a previous valid PNG. Each asset retains only the latest
 successful render settings. There is no answer cache, cache database or new document hashing scheme.
+Corrected clipping metadata can invalidate an older falsely-clipped entry once; normal metadata validation
+then reuses the corrected PNG. No cache deletion or fingerprint/schema change is needed.
 
 ### Visual results and diagnostics
 
@@ -273,6 +276,11 @@ Local validation uses Windows and the existing CPython 3.14.3 environment. MCP-1
 includes Windows subprocess checks; CI adds Windows/Python 3.12 alongside existing Linux versions.
 The exact POSIX mode assertion runs only on POSIX; Windows retains store location/cache/persistence checks.
 Executed checks and corpus skips are recorded in TODO/HISTORY. CI configuration does not establish a CI run.
+The 2026-09-30 targeted review checks passed on Windows CPython 3.14.3: 12 crop tests, 21 probe tests,
+and full discovery (144 run, 139 passed, five opt-in corpus skips); Ruff, Basedpyright, Vulture
+and `git diff --check` passed.
+Linux/Python 3.12 execution remains unverified for these fixes. The owner-run 600-second probes below
+and their manual evidence review remain pending; no live model requests ran during implementation.
 Live visual endpoints, scientific acceptance and consumer integration remain unverified. MCP-11B remains
 pending real execution/manual review, independently of successful local implementation checks.
 
@@ -286,11 +294,12 @@ From the repository root in PowerShell, use the existing environment:
 
 ```powershell
 $python = (Resolve-Path ".\.venv\Scripts\python.exe").Path
-& $python -m pip install -e ".[dev,probes]"
+# Only if the optional probe dependencies/editable installation are missing:
+# & $python -m pip install -e ".[dev,probes]"
 # If this existing uv environment has no pip, use this instead:
 # uv pip install --python "$python" -e ".[dev,probes]"
 $pdf = (Resolve-Path ".\papers\004_microstrip_patch.pdf").Path
-$run = Join-Path (Get-Location) "probe-runs\microstrip"
+$run = Join-Path (Get-Location) "probe-runs\microstrip-review-fixes"
 $question = "Identify the visible geometric components and transcribe their dimension labels, values and units. Associate each dimension with its component and explicitly report anything unreadable or ambiguous."
 ```
 
@@ -302,20 +311,18 @@ override file values; dotenv interpolation is disabled. The child receives `SKYN
 as its alias when the former is absent. No model is selected automatically. The agent separately requires
 `--agent-model`; this may differ from the visual model. Missing visual settings produce a recorded failure.
 
-Step 1: list the paper and all canonical IDs, then choose a figure. Catalog is safe to run without a model:
+Step 1: list the paper and all canonical IDs, then inspect the review figure. Use a new run directory
+to retain earlier evidence. Catalog is safe to run without a model:
 
 ```powershell
-& $python ".\scripts\probe_mcp.py" catalog --pdf "$pdf" --run-dir "$run"
-$asset = "<canonical figure ID copied from catalog>"
-& $python ".\scripts\probe_mcp.py" inspect --pdf "$pdf" --run-dir "$run" --asset-id "$asset" --question "$question"
+& $python ".\scripts\probe_mcp.py" catalog --pdf "$pdf" --run-dir "$run" --visual-timeout 600
+# Two explicitly requested fresh inspections of the same review figure:
+& $python ".\scripts\probe_mcp.py" inspect --pdf "$pdf" --run-dir "$run" --visual-timeout 600 --asset-id "segment:1/figure:7" --question "$question" --repeat 2
 # Explicit full-page inspection (physical PDF page 3):
-& $python ".\scripts\probe_mcp.py" inspect --pdf "$pdf" --run-dir "$run" --asset-id "page:3" --question "$question"
-# Two explicitly requested fresh inspections of the same selected figure:
-& $python ".\scripts\probe_mcp.py" inspect --pdf "$pdf" --run-dir "$run" --asset-id "$asset" --question "$question" --repeat 2
+& $python ".\scripts\probe_mcp.py" inspect --pdf "$pdf" --run-dir "$run" --visual-timeout 600 --asset-id "page:3" --question "$question"
 ```
 
-For this discovered PDF, the catalog includes `segment:1/figure:1` on page 3; choose the relevant figure
-after reviewing the catalog/PDF. An available region does not establish that it contains the intended
+Review `segment:1/figure:7` against the catalog/PDF. An available region does not establish that it contains the intended
 geometry. `inspect` first checks `get_asset` without a question (`not_requested`), then sends the exact
 question once for each repetition. It reports answers/reasons, source pages, coverage, inspection IDs,
 and artifact locations. `--repeat 2` compares PNG bytes and modification time and checks distinct diagnostic
@@ -325,15 +332,21 @@ Step 2: let the small agent choose its own sequence from all six MCP tools:
 
 ```powershell
 $agentModel = "<explicit Chat Completions model ID>"
-& $python ".\scripts\probe_mcp.py" agent --pdf "$pdf" --run-dir "$run" --agent-model "$agentModel" --max-turns 8
+& $python ".\scripts\probe_mcp.py" agent --pdf "$pdf" --run-dir "$run" --visual-timeout 600 --agent-model "$agentModel" --max-turns 8
 ```
 
-The agent locates a geometry figure, requests `get_asset(question=...)`, and summarizes components,
-dimensions and uncertainties with references. Paper/tool content is evidence, not instructions. Images
+The agent chooses one geometry figure or design variant for this connection test, requests
+`get_asset(question=...)`, and explicitly requests its source `page:N` if the crop is unavailable or insufficient.
+After relevant visual success and any necessary targeted text/table read, it finishes with a concise summary
+of components, dimensions and unresolved associations with references. It does not investigate every variant
+or seek complete reconstruction; if suitable visual evidence cannot be obtained, it stops with an explicit
+limitation. Tool selection remains autonomous with all six tools available.
+Paper/tool content is evidence, not instructions. Images
 go only to the MCP visual helper. Tracing exports and automatic client/MCP retries are disabled. The SDK
 stdio context closes the subprocess on completion, failure and cancellation. `--max-turns` defaults to 8.
-Both probes accept `--visual-timeout 120` (seconds, default 120), passed as
+All subcommands accept `--visual-timeout 600` (seconds, default 600), passed as
 `VISUAL_INSPECTION_TIMEOUT_SECONDS`; MCP calls allow that timeout plus 60 seconds for rendering/transport.
+Production visual settings remain explicitly supplied by the host; this default belongs to the probe CLI.
 
 Each invocation saves UTF-8 `probe-<command>-<unique-id>.json` under `$run`, including partial calls on
 failure. Direct probes retain tool results; the agent record contains its final answer and compact tool
@@ -345,7 +358,13 @@ Existing PNGs live under `$run\images\<document-id>\`; the helper's diagnostics 
 
 Exit code 0 means operational success; any nonzero `$LASTEXITCODE` means failure. Catalog does not test
 vision. An agent's text answer alone returns failure: `visual_succeeded` must be true and the run must
-finish without an operational failure. Check both fields in the JSON. Return the probe JSON files,
+finish with a non-blank final answer without an operational failure. An `unavailable` crop remains recorded
+with its reason/references and may be followed by explicit successful page inspection; it does not by itself
+invalidate that completed agent run. Unavailable-only runs, tool exceptions, other visual failure statuses
+and `MaxTurnsExceeded` still fail, even if another inspection succeeded. Direct `inspect` of an unavailable
+asset still fails. There are no automatic retries, page fallbacks or status rewrites.
+Check both success fields in the JSON and all three `repeat_check` fields for the repeated figure.
+Return the probe JSON files,
 referenced inspection JSONs and PNGs for review; do not return `.env`. Compare each crop/page against the
 original PDF, checking missing/clipped regions, units, label-to-component associations and ambiguities.
 Successful requests do not establish scientific correctness. Keep custom output directories ignored;

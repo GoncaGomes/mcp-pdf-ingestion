@@ -60,7 +60,7 @@ class ProbeTests(unittest.TestCase):
             self.assertEqual(env["SKYNET_API_KEY"], "process-key")
             self.assertEqual(env["SKYNET_BASE_URL"], "https://example.invalid/v1")
             self.assertEqual(env["VISUAL_INSPECTION_MODEL"], "process-image")
-            self.assertEqual(env["VISUAL_INSPECTION_TIMEOUT_SECONDS"], "120")
+            self.assertEqual(env["VISUAL_INSPECTION_TIMEOUT_SECONDS"], "600")
             self.assertEqual(env["PDF_INGESTION_PDF"], str(self.pdf))
             self.assertEqual(env["PDF_INGESTION_RUN_DIR"], str(self.run_dir))
             self.assertNotIn("VISUAL_INSPECTION_MODEL", os.environ)
@@ -70,6 +70,12 @@ class ProbeTests(unittest.TestCase):
             file.write("VISUAL_INSPECTION_MODEL=file-visual\n")
         with mock.patch.dict(os.environ, {"IMAGE_ANALYSIS_MODEL": "alias"}, clear=True):
             self.assertEqual(probe.environment(self.args())["VISUAL_INSPECTION_MODEL"], "file-visual")
+
+    def test_timeout_and_turn_overrides(self):
+        args = self.args("agent", "--agent-model", "chosen", "--visual-timeout", "700", "--max-turns", "3")
+        self.assertEqual(args.visual_timeout, 700)
+        self.assertEqual(probe.environment(args)["VISUAL_INSPECTION_TIMEOUT_SECONDS"], "700.0")
+        self.assertEqual(args.max_turns, 3)
 
     def test_required_and_invalid_arguments(self):
         cases = [
@@ -92,9 +98,11 @@ class ProbeTests(unittest.TestCase):
         self.assertTrue(Path(probe.executable()).is_file())
 
     def test_cli_help_and_synthetic_catalog_subprocess(self):
-        for argv in (["--help"], ["catalog", *self.common]):
+        for argv in (["--help"], ["inspect", "--help"], ["catalog", *self.common]):
             result = subprocess.run([sys.executable, str(SCRIPT), *argv], capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stderr)
+            if argv == ["inspect", "--help"]:
+                self.assertIn("default: 600", result.stdout)
         report = json.loads(next(self.run_dir.glob("probe-catalog-*.json")).read_text(encoding="utf-8"))
         self.assertTrue(report["operational_success"])
         self.assertEqual([c["tool"] for c in report["calls"]], ["get_paper_overview", "list_assets"])
@@ -112,12 +120,13 @@ class ProbeTests(unittest.TestCase):
                 response({"items": [], "next_cursor": None}),
             ]
         )
-        with mock.patch.object(probe, "Client", return_value=fake), contextlib.redirect_stdout(io.StringIO()):
+        with mock.patch.object(probe, "Client", return_value=fake) as client, contextlib.redirect_stdout(io.StringIO()):
             self.assertTrue(asyncio.run(probe.direct(self.args(), {}, {"calls": []})))
+        self.assertEqual(client.call_args.kwargs["timeout"], 660)
         fake.call_tool.assert_awaited_with("list_assets", {"cursor": "opaque"})
         fake.__aexit__.assert_awaited_once()
 
-    def inspection(self, fail=False, duplicate=False, mutate=False):
+    def inspection(self, fail=False, duplicate=False, mutate=False, status=None):
         args = self.args("inspect", "--asset-id", "page:1", "--question", " exact question \n", "--repeat", "2")
         image = self.run_dir / probe.image_reference("document", "page:1")
         image.parent.mkdir(parents=True)
@@ -138,7 +147,7 @@ class ProbeTests(unittest.TestCase):
                     "document_id": "document",
                     "rendered_pages": [1],
                     "visual": {
-                        "status": "timeout" if fail else "success",
+                        "status": status or ("timeout" if fail else "success"),
                         "inspection_id": "same" if duplicate else str(counter),
                         "answer": "visible component",
                         "visual_coverage": "single_page",
@@ -167,6 +176,12 @@ class ProbeTests(unittest.TestCase):
         self.assertFalse(result)
         self.assertTrue(report["repeat_check"]["png_content_and_mtime_unchanged"])
         self.assertFalse(report["repeat_check"]["successful_cache_and_vision_check"])
+
+    def test_direct_unavailable_inspection_is_failure(self):
+        result, report = self.inspection(status="unavailable")
+        self.assertFalse(result)
+        self.assertFalse(report["visual_succeeded"])
+        self.assertEqual(report["calls"][1]["result"]["visual"]["status"], "unavailable")
 
     def test_duplicate_diagnostics_fail(self):
         self.assertFalse(self.inspection(duplicate=True)[0])
@@ -212,6 +227,7 @@ class ProbeTests(unittest.TestCase):
         async def run(agent, question, **kwargs):
             self.assertEqual(agent.model.model, "explicit-agent")
             self.assertEqual(agent.model._client.max_retries, 0)
+            self.assertEqual(agent.model._client.timeout, args.visual_timeout)
             self.assertFalse(agent.model_settings.parallel_tool_calls)
             self.assertTrue(kwargs["run_config"].tracing_disabled)
             self.assertEqual(kwargs["max_turns"], 8)
@@ -256,6 +272,120 @@ class ProbeTests(unittest.TestCase):
                     with self.assertRaises(type(effect)):
                         asyncio.run(probe.agent(args, env, report))
                 cleanup.assert_awaited_once()
+
+    def agent_scenario(
+        self, statuses, *, final_answer="Visible geometry; unresolved dimensions remain uncertain.", error=None
+    ):
+        from agents import Runner
+        from agents.mcp import MCPServerStdio
+
+        results = [
+            status
+            if isinstance(status, Exception)
+            else response(
+                {"visual": {"status": status, "reason": f"attempt-{i}", "inspection_id": f"inspection-{i}"}}
+            )
+            for i, status in enumerate(statuses)
+        ]
+
+        async def run(agent, *_args, **kwargs):
+            self.assertEqual(kwargs["max_turns"], 3)
+            server = agent.mcp_servers[0]
+            for i, status in enumerate(statuses):
+                arguments = {"asset_id": "segment:1/figure:7" if i == 0 else "page:1", "question": "Geometry?"}
+                if isinstance(status, Exception):
+                    with self.assertRaises(type(status)):
+                        await server.call_tool("get_asset", arguments)
+                else:
+                    await server.call_tool("get_asset", arguments)
+            if error is not None:
+                raise error
+            return SimpleNamespace(final_output=final_answer)
+
+        with (
+            mock.patch.dict(os.environ, {"SKYNET_API_KEY": "fake", "SKYNET_BASE_URL": "https://example.invalid/v1"}),
+            mock.patch.object(MCPServerStdio, "connect", new_callable=mock.AsyncMock),
+            mock.patch.object(MCPServerStdio, "cleanup", new_callable=mock.AsyncMock) as cleanup,
+            mock.patch.object(
+                MCPServerStdio, "list_tools", new_callable=mock.AsyncMock,
+                return_value=[SimpleNamespace(name=n) for n in probe.TOOLS],
+            ),
+            mock.patch.object(MCPServerStdio, "call_tool", new_callable=mock.AsyncMock, side_effect=results) as call,
+            mock.patch.object(Runner, "run", side_effect=run),
+            mock.patch.object(probe.uuid, "uuid4", return_value=SimpleNamespace(hex="scenario")),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            code = probe.main(["agent", *self.common, "--agent-model", "fake-agent", "--max-turns", "3"])
+        cleanup.assert_awaited_once()
+        self.assertEqual(call.await_count, len(statuses))
+        return code, json.loads((self.run_dir / "probe-agent-scenario.json").read_text(encoding="utf-8"))
+
+    @unittest.skipUnless(importlib.util.find_spec("agents"), "Install .[probes] for SDK tests.")
+    def test_agent_unavailable_crop_then_successful_page_is_recovery(self):
+        code, report = self.agent_scenario(["unavailable", "success"])
+        self.assertEqual(code, 0)
+        self.assertTrue(report["operational_success"])
+        self.assertTrue(report["visual_succeeded"])
+        self.assertTrue(report["final_answer"].strip())
+        self.assertEqual(len(report["calls"]), 2)
+        for i, status in enumerate(("unavailable", "success")):
+            entry = report["calls"][i]
+            self.assertEqual(entry["outcome"], "returned")
+            self.assertEqual(entry["visual"]["status"], status)
+            self.assertEqual(entry["visual"]["reason"], f"attempt-{i}")
+            self.assertEqual(
+                entry["artifacts"]["diagnostic"], str(self.run_dir / "inspections" / f"inspection-{i}.json")
+            )
+        self.assertEqual(report["calls"][0]["arguments"]["asset_id"], "segment:1/figure:7")
+        self.assertEqual(report["calls"][1]["arguments"]["asset_id"], "page:1")
+
+    @unittest.skipUnless(importlib.util.find_spec("agents"), "Install .[probes] for SDK tests.")
+    def test_agent_unavailable_only_is_failure(self):
+        code, report = self.agent_scenario(["unavailable"])
+        self.assertEqual(code, 1)
+        self.assertFalse(report["operational_success"])
+        self.assertFalse(report["visual_succeeded"])
+        self.assertEqual(report["calls"][0]["visual"]["status"], "unavailable")
+
+    @unittest.skipUnless(importlib.util.find_spec("agents"), "Install .[probes] for SDK tests.")
+    def test_agent_success_then_max_turns_is_failure(self):
+        from agents.exceptions import MaxTurnsExceeded
+
+        code, report = self.agent_scenario(["success"], error=MaxTurnsExceeded("Narrow task did not finish."))
+        self.assertEqual(code, 1)
+        self.assertTrue(report["visual_succeeded"])
+        self.assertFalse(report["operational_success"])
+        self.assertEqual(report["error_type"], "MaxTurnsExceeded")
+        self.assertEqual(report["calls"][0]["visual"]["status"], "success")
+
+    @unittest.skipUnless(importlib.util.find_spec("agents"), "Install .[probes] for SDK tests.")
+    def test_agent_visual_failure_is_failure_even_with_success(self):
+        for status in ("timeout", "model_error", "render_error"):
+            with self.subTest(status=status):
+                code, report = self.agent_scenario([status, "success"])
+                self.assertEqual(code, 1)
+                self.assertTrue(report["visual_succeeded"])
+                self.assertFalse(report["operational_success"])
+                self.assertEqual(report["calls"][0]["visual"]["status"], status)
+
+    @unittest.skipUnless(importlib.util.find_spec("agents"), "Install .[probes] for SDK tests.")
+    def test_agent_tool_exception_is_failure_even_with_success(self):
+        code, report = self.agent_scenario([RuntimeError("Tool failed."), "success"])
+        self.assertEqual(code, 1)
+        self.assertTrue(report["visual_succeeded"])
+        self.assertFalse(report["operational_success"])
+        self.assertEqual(report["calls"][0]["outcome"], "error")
+        self.assertEqual(report["calls"][0]["error_type"], "RuntimeError")
+
+    @unittest.skipUnless(importlib.util.find_spec("agents"), "Install .[probes] for SDK tests.")
+    def test_agent_success_without_final_answer_is_failure(self):
+        for answer in (None, "", " \n "):
+            with self.subTest(answer=answer):
+                code, report = self.agent_scenario(["success"], final_answer=answer)
+                self.assertEqual(code, 1)
+                self.assertTrue(report["visual_succeeded"])
+                self.assertFalse(report["operational_success"])
 
     @unittest.skipUnless(importlib.util.find_spec("agents"), "Install .[probes] for SDK tests.")
     def test_text_only_agent_is_not_visual_success(self):

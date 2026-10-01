@@ -624,7 +624,7 @@ No edits to the antenna repository or personal coding-agent settings.
 
 **Authorized implementation batch (2026-09-29):** implement `catalog`, `inspect`
 and `agent` subcommands. Require explicit PDF/run directory, local dotenv loading
-with process-environment precedence, visual model aliasing and a 120-second visual
+with process-environment precedence, visual model aliasing and a 600-second visual
 timeout (MCP call timeout adds 60 seconds). No production dotenv, heuristic, cache
 layout, six-tool-contract or model-policy changes. Catalog traverses all assets
 without rendering or models. Inspect confirms question-free `not_requested`, sends
@@ -641,6 +641,18 @@ checks once. These blocks may proceed sequentially under the current assignment.
 **Block 11B.3 (pending owner execution):** manually run real visual and agent commands,
 review diagnostic/PNG evidence and observations against the paper. Live model calls
 are explicitly prohibited during this implementation batch.
+
+**Targeted review fixes (authorized 2026-09-30):** correct crop clipping using
+visible-page containment before intersection, preserving geometry/errors and cache
+metadata validation. Align probe tests/help/docs with the owner's 600-second default
+and existing +60-second MCP margin; production host settings remain explicit.
+Keep unavailable crop attempts recorded; agent success requires at least one successful
+visual inspection, a non-blank final answer and no tool exception/other visual failure
+or MaxTurnsExceeded. Direct unavailable inspection still fails. The agent chooses one
+figure/variant, may explicitly inspect its source page and finishes its narrow summary
+with uncertainties; no automatic retries/fallback, complete reconstruction or turn increase.
+Run focused crop/probe tests, then all repository checks once; keep 11B.3 pending a
+successful live rerun and manual review. No Git mutations or dependency upgrades.
 
 **Verify:** real image/question reaches the VLM; reply/usage/failures are inspectable.
 The small SDK probe belongs here and establishes standalone operational acceptance.
