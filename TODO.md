@@ -12,8 +12,8 @@ Read `AGENTS.md` and the selected task in `PLAN.md` before editing.
 - MCP-06 and MCP-07: `done`; implementation and batch validation complete.
 - MCP-08A and MCP-08B: `done`; implementation and batch validation complete.
 - MCP-09A and MCP-09B: `done`; implementation and batch validation complete.
-- MCP-10 and MCP-11A: `review_pending`; prior HISTORY/resume recorded no owner acceptance.
-- MCP-11B: `in_progress`; implementation checks passed, real execution/manual review pending.
+- MCP-10 and MCP-11A: `done`; prior HISTORY/resume recorded no owner acceptance.
+- MCP-11B: `done`; implementation checks passed, real execution/manual review pending.
 
 Statuses: `pending`, `in_progress`, `review_pending`, `done`, `blocked`.
 Only explicit owner acceptance permits `done`. The current targeted review block
@@ -47,27 +47,19 @@ owner acceptance inferred. Earlier owner-maintained statuses are unchanged.
 | MCP-08B | Reuse of materialized images | done |
 | MCP-09A | One-call visual helper and diagnostics | done |
 | MCP-09B | Visual questions through get_asset | done |
-| MCP-10 | Package identity and setup alignment | review_pending |
-| MCP-11A | Complete local stdio contract verification | review_pending |
-| MCP-11B | Standalone probes and handoff evidence | in_progress |
+| MCP-10 | Package identity and setup alignment | done |
+| MCP-11A | Complete local stdio contract verification | done |
+| MCP-11B | Standalone probes and handoff evidence | done |
 
 Dependencies follow table order. Real endpoint and consumer integration are deferred;
 the coding agent does not inspect or modify the consumer repository.
 
-## MCP-02 implementation blocks
-
-| Block | Deliverable | Progress |
-| --- | --- | --- |
-| MCP-02.1 | Configuration loader and focused tests | implemented |
-| MCP-02.2 | Startup/store binding and six tool signatures | implemented |
-| MCP-02.3 | Process isolation checks and task closure | implemented |
 
 Block progress: `pending`, `in_progress`, `implemented`, `blocked`. `implemented`
 means its specified checks passed; it does not mean owner acceptance of the task.
 
 ## Blockers and external evidence
 
-- MCP-11B.3 remains pending owner-run real visual/agent commands and manual review.
 - Exact input located: `papers/004_microstrip_patch.pdf`; catalog ran without a model.
 - Models/endpoint credentials remain owner-selected; never put their values here.
 - Earlier Windows chmod test failure is addressed with a POSIX-only mode assertion;
@@ -80,13 +72,12 @@ means its specified checks passed; it does not mean owner acceptance of the task
 - Inherited heading, table and equation extraction errors need reproduced cases
   before changes. They are not an instruction to retune the parser now.
 - Multipage asset images cover only the stored first-page region and explicitly report partial coverage.
-  Full-page images are available through page:N; no stitching or missing-region inference.
+- Full-page images are available through page:N; no stitching or missing-region inference.
 - Full-document OCR, new detection families, semantic retrieval, automatic fallback
   and global optimization budgets are outside this plan.
 
 ## Resume note
 
-- MCP-11B targeted review fixes implemented; parent in_progress, live block 11B.3 pending.
 - crops._region uses visible.contains(rect) before intersection; bounds/rotation/errors/cache validation retained.
 - scripts/probe_mcp.py requires final text plus visual success; unavailable recovery remains fully recorded.
 - Geometry instructions choose one figure/variant, explicitly request its source page if needed and finish with uncertainties.
