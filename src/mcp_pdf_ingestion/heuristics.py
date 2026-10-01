@@ -17,7 +17,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 
-from reviewer_mcp.config import load_section
+from mcp_pdf_ingestion.config import load_section
 
 
 def load_heuristics() -> dict[str, float]:

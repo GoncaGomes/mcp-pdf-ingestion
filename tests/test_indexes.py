@@ -5,7 +5,7 @@ from pathlib import Path
 import pymupdf as fitz
 from pdf_fixtures import IsolatedTestCase, build_fixture
 
-from reviewer_mcp.store import PaperStore, close_all
+from mcp_pdf_ingestion.store import PaperStore, close_all
 
 REAL_WORKSPACE = os.environ.get("REVIEWER_WORKSPACE", "")
 ACCESS = Path(REAL_WORKSPACE) / "papers" / "Access-2026-41373_Proof_hi.pdf"
@@ -128,6 +128,18 @@ class TestParagraphsAndSections(IsolatedTestCase):
         self.assertEqual(store.search('"; DROP TABLE lines; --')[0], 0)
         self.assertEqual(store.search("..."), (0, []))
         self.assertEqual(store.search("ablation", first=1, last=3), (0, []))
+
+    def test_search_offset_preserves_total_and_record_order(self):
+        store = PaperStore.open(build_fixture("ieee_single", self.tmp_path))
+        total, all_hits = store.search("the", limit=100000)
+        self.assertGreater(total, 15)
+        walked = []
+        for offset in range(0, total, 7):
+            count, hits = store.search("the", limit=7, offset=offset)
+            self.assertEqual(count, total)
+            walked.extend(hits)
+        self.assertEqual(walked, all_hits)
+        self.assertEqual(store.search("the", offset=total), (total, []))
 
 
 @unittest.skipUnless(REAL_WORKSPACE and ACCESS.is_file(), "set REVIEWER_WORKSPACE to a workspace with the Access proof")

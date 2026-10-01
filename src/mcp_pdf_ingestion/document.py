@@ -27,7 +27,7 @@ from typing import Any
 
 import pymupdf as fitz
 
-from reviewer_mcp.heuristics import (
+from mcp_pdf_ingestion.heuristics import (
     COLUMN_OVERLAP,
     LINE_NUMBER_SEQUENCE,
     RUNNING_MIN_PAGES,

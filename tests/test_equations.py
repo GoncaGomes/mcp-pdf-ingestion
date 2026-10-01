@@ -4,7 +4,7 @@ import unittest
 
 import pymupdf as fitz
 
-from reviewer_mcp.equations import equation_text
+from mcp_pdf_ingestion.equations import equation_text
 
 
 def page_with(parts, number="(7)", size=10.0):

@@ -9,11 +9,11 @@ from unittest import mock
 import pymupdf as fitz
 from pdf_fixtures import IsolatedTestCase, build_fixture
 
-from reviewer_mcp import store as store_module
-from reviewer_mcp.config import scratch_base
-from reviewer_mcp.document import extract
-from reviewer_mcp.heuristics import LINE_NUMBER_SEQUENCE
-from reviewer_mcp.store import PaperStore, close_all
+from mcp_pdf_ingestion import store as store_module
+from mcp_pdf_ingestion.config import scratch_base
+from mcp_pdf_ingestion.document import extract
+from mcp_pdf_ingestion.heuristics import LINE_NUMBER_SEQUENCE
+from mcp_pdf_ingestion.store import PaperStore, close_all
 
 REAL_WORKSPACE = os.environ.get("REVIEWER_WORKSPACE", "")
 
@@ -84,10 +84,20 @@ class TestPaperStore(IsolatedTestCase):
         store = PaperStore.open(pdf)
         self.assertIs(PaperStore.open(pdf), store)
         self.assertTrue(str(store.path).startswith(str(scratch_base() / "store")))
-        self.assertEqual(stat.S_IMODE(store.path.parent.stat().st_mode), 0o700)
+        if os.name == "posix":
+            self.assertEqual(stat.S_IMODE(store.path.parent.stat().st_mode), 0o700)
         self.assertEqual(store.meta()["extractor_version"], store_module.EXTRACTOR_VERSION)
         store.set_state("manuscript", "4-17")
         self.assertEqual(PaperStore.open(pdf).get_state("manuscript"), "4-17")
+
+    def test_explicit_run_dir_places_the_store_inside_it(self):
+        pdf = build_fixture("ieee_single", self.tmp_path)
+        run_dir = self.tmp_path / "run"
+        store = PaperStore.open(pdf, run_dir=run_dir)
+        self.assertTrue(store.path.is_relative_to(run_dir))
+        self.assertEqual(store.path.parent.name, store.meta()["fingerprint"][:16])
+        self.assertEqual(store.path.name, "paper.sqlite")
+        self.assertIs(PaperStore.open(pdf, run_dir=run_dir), store)
 
     def test_same_name_different_content_gets_its_own_store(self):
         first = self.tmp_path / "a" / "paper.pdf"

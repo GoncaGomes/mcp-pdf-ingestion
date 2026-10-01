@@ -38,8 +38,8 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 
-from reviewer_mcp.document import Line, Page
-from reviewer_mcp.heuristics import INDENT, NUMBERING_RUN, PARAGRAPH_SPACE, SAME_ROW, Metrics
+from mcp_pdf_ingestion.document import Line, Page
+from mcp_pdf_ingestion.heuristics import INDENT, NUMBERING_RUN, PARAGRAPH_SPACE, SAME_ROW, Metrics
 
 MATH_FONT_RE = re.compile(r"^(?:CM(?:MI|SY|EX|R|BX|TI|SS)\d+|MSBM|MSAM|Symbol|STIX|Euclid|.*Math)", re.IGNORECASE)
 MATH_CHAR_RE = re.compile(r"[=±×÷∈∉⊂⊆∑∏∫√∞≤≥≈→←↦∀∃θλμσπ]")

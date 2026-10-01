@@ -31,9 +31,9 @@ from typing import Any
 
 import pymupdf as fitz
 
-from reviewer_mcp.document import Line, Page
-from reviewer_mcp.equations import equation_text
-from reviewer_mcp.heuristics import (
+from mcp_pdf_ingestion.document import Line, Page
+from mcp_pdf_ingestion.equations import equation_text
+from mcp_pdf_ingestion.heuristics import (
     CAPTION_REGION,
     FIGURE_MIN_HEIGHT,
     FIGURE_MIN_WIDTH,
@@ -44,7 +44,7 @@ from reviewer_mcp.heuristics import (
     SAME_ROW,
     Metrics,
 )
-from reviewer_mcp.indexes import (
+from mcp_pdf_ingestion.indexes import (
     CAPTION_RE,
     LABEL_END,
     LABEL_NUMBER,

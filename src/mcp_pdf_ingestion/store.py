@@ -1,7 +1,8 @@
 """Per-paper SQLite store: extraction results are persisted once and queried per request.
 
-The store lives in `<scratch>/store/<sha256[:16]>/paper.sqlite`, keyed by the PDF content, so a
-replaced PDF with the same name gets a fresh store and two different PDFs never share one. It is
+The store lives in `<run-dir>/store/<sha256[:16]>/paper.sqlite` (under the legacy scratch base when a store is
+opened without a run directory), keyed by the PDF content, so a replaced PDF with the same name gets a fresh
+store and two different PDFs never share one. It is
 rebuilt when EXTRACTOR_VERSION or the PyMuPDF version changes. Builds write to a temporary file
 that is renamed into place, so an interrupted build never leaves a half-filled store. Queries
 fetch only what a request needs; nothing large is kept in memory between calls.
@@ -16,18 +17,17 @@ import re
 import sqlite3
 import threading
 from collections import OrderedDict
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pymupdf as fitz
 
-from reviewer_mcp.assets import build_assets
-from reviewer_mcp.config import scratch_base
-from reviewer_mcp.document import extract, measure
-from reviewer_mcp.heuristics import DIGEST as HEURISTICS_DIGEST
-from reviewer_mcp.indexes import build_indexes
-from reviewer_mcp.structure import build_structure
+from mcp_pdf_ingestion.assets import build_assets
+from mcp_pdf_ingestion.config import scratch_base
+from mcp_pdf_ingestion.document import extract, measure
+from mcp_pdf_ingestion.heuristics import DIGEST as HEURISTICS_DIGEST
+from mcp_pdf_ingestion.indexes import build_indexes
+from mcp_pdf_ingestion.structure import build_structure
 
 EXTRACTOR_VERSION = "32"
 MAX_OPEN_STORES = 8
@@ -312,14 +312,19 @@ class PaperStore:
         self.con.row_factory = sqlite3.Row
 
     @classmethod
-    def open(cls, pdf_path: str | Path) -> PaperStore:
-        """Open the store for a PDF, building or rebuilding it when missing or stale."""
+    def open(cls, pdf_path: str | Path, *, run_dir: Path | None = None) -> PaperStore:
+        """Open the store for a PDF, building or rebuilding it when missing or stale.
+
+        The database lives under ``run_dir`` when given (the server's bound run directory) and under the legacy
+        scratch base otherwise, which keeps the internal extractor-test callers unchanged.
+        """
         pdf = Path(pdf_path).resolve()
         if not pdf.is_file():
             raise FileNotFoundError(f"PDF not found: {pdf.name}")
         with _LOCK:
             expected = _expected_meta(pdf)
-            db = scratch_base() / "store" / expected["fingerprint"][:16] / "paper.sqlite"
+            base = run_dir if run_dir is not None else scratch_base()
+            db = base / "store" / expected["fingerprint"][:16] / "paper.sqlite"
             key = str(db)
             cached = _OPEN.pop(key, None)
             if cached is not None:
@@ -367,25 +372,6 @@ class PaperStore:
         rows = self._query("SELECT * FROM pages WHERE page BETWEEN ? AND ? ORDER BY page", (first, last))
         return [dict(row) for row in rows]
 
-    def reading_pages(self, first: int, last: int, omission: str = "") -> list[dict[str, Any]]:
-        """Pages first..last; with an omission line, the entries of the reference list are left out of the text and
-        replaced by that line once per page."""
-        pages = self.pages(first, last)
-        sql = "SELECT first_line, last_line FROM paragraphs WHERE kind = 'reference' AND last_page >= ? AND page <= ?"
-        spans = [(row["first_line"], row["last_line"]) for row in self._query(sql, (first, last))] if omission else []
-        if not spans:
-            return pages
-        for page in pages:
-            kept: list[str] = []
-            for line in self.lines(page["page"], ("body",)):
-                if not any(low <= line["id"] <= high for low, high in spans):
-                    kept.append(line["text"])
-                elif omission not in kept:
-                    kept.append(omission)
-            if omission in kept:
-                page["text"] = "\n".join(kept)
-        return pages
-
     def lines(self, page: int, regions: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
         if regions:
             marks = ",".join("?" for _ in regions)
@@ -419,10 +405,20 @@ class PaperStore:
             sql, params = "SELECT * FROM paragraphs WHERE id >= ? ORDER BY id", (start,)
         return [dict(row) for row in self._query(sql, params)]
 
+    def paragraph_lines(self, paragraph_id: int) -> list[dict[str, Any]]:
+        """Body lines in the paragraph's stored span, in extraction order, retaining their PDF pages."""
+        rows = self._query(
+            "SELECT l.id, l.page, l.text FROM lines l JOIN paragraphs p "
+            "ON l.id BETWEEN p.first_line AND p.last_line "
+            "WHERE p.id = ? AND l.region = 'body' ORDER BY l.id",
+            (paragraph_id,),
+        )
+        return [dict(row) for row in rows]
+
     def search(
-        self, query: str, limit: int = 15, first: int = 1, last: int | None = None
+        self, query: str, limit: int = 15, first: int = 1, last: int | None = None, offset: int = 0
     ) -> tuple[int, list[dict[str, Any]]]:
-        """Case-insensitive search over paragraphs, in document order: (total hits, first hits).
+        """Case-insensitive search over paragraphs, in stable ID order: (total hits, requested slice).
 
         The query is matched as a phrase whose last word is a prefix, like grep on words: 'Fig' finds
         'Figure', 'Table I' finds 'Table I' and 'Table II'.
@@ -439,31 +435,48 @@ class PaperStore:
         total = self._query(f"SELECT COUNT(*) {joined}", (phrase, first, last))[0][0]
         rows = self._query(
             "SELECT p.id, p.page, p.kind, p.section, COALESCE(s.title, '') AS section_title, "
-            f"snippet(paragraph_search, 0, '[', ']', '…', 16) AS snippet {joined} ORDER BY p.id LIMIT ?",
-            (phrase, first, last, limit),
+            f"snippet(paragraph_search, 0, '[', ']', '…', 16) AS snippet {joined} ORDER BY p.id LIMIT ? OFFSET ?",
+            (phrase, first, last, limit, offset),
         )
         return int(total), [dict(row) for row in rows]
 
-    def assets(self, kind: str | None = None, first: int = 1, last: int | None = None) -> list[dict[str, Any]]:
-        """Assets on pages first..last in document order, with the number of paragraphs citing each ('cited')."""
+    def assets(
+        self,
+        kind: str | None = None,
+        first: int = 1,
+        last: int | None = None,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Numbered assets overlapping the range, ordered by sequence and the unique segment/ID pair."""
         last = self.page_count if last is None else last
         cited = "(SELECT COUNT(*) FROM mentions m WHERE m.segment = a.segment AND m.asset = a.id) AS cited"
-        where = "WHERE a.page BETWEEN ? AND ?" + (" AND a.kind = ?" if kind else "")
-        params: tuple[Any, ...] = (first, last, kind) if kind else (first, last)
-        return [dict(row) for row in self._query(f"SELECT a.*, {cited} FROM assets a {where} ORDER BY a.seq", params)]
+        where = "WHERE a.page <= ? AND a.last_page >= ?" + (" AND a.kind = ?" if kind is not None else "")
+        params: tuple[Any, ...] = (last, first, kind) if kind is not None else (last, first)
+        sql = f"SELECT a.*, {cited} FROM assets a {where} ORDER BY a.seq, a.segment, a.id"
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params += (limit, offset)
+        return [dict(row) for row in self._query(sql, params)]
 
-    def asset(self, asset_id: str, first: int = 1, last: int | None = None) -> dict[str, Any] | None:
-        """The first asset with this id on pages first..last, with its mentions (paragraph, page, text, strength)."""
-        last = self.page_count if last is None else last
-        rows = self._query(
-            "SELECT * FROM assets WHERE id = ? AND page BETWEEN ? AND ? ORDER BY seq LIMIT 1", (asset_id, first, last)
-        )
+    def asset_counts(self, kind: str | None, first: int, last: int) -> dict[str, int]:
+        """Counts over the full filtered result, independent of the catalog response page."""
+        where = "WHERE page <= ? AND last_page >= ?" + (" AND kind = ?" if kind is not None else "")
+        params: tuple[Any, ...] = (last, first, kind) if kind is not None else (last, first)
+        rows = self._query(f"SELECT kind, COUNT(*) AS n FROM assets {where} GROUP BY kind ORDER BY kind", params)
+        return {row["kind"]: row["n"] for row in rows}
+
+    def asset(self, segment: int, asset_id: str) -> dict[str, Any] | None:
+        """The exact (segment, stored ID) asset and only its mentions."""
+        rows = self._query("SELECT * FROM assets WHERE segment = ? AND id = ?", (segment, asset_id))
         if not rows:
             return None
         found = dict(rows[0])
         mentions = self._query(
-            "SELECT paragraph, page, text, strength FROM mentions WHERE segment = ? AND asset = ? ORDER BY paragraph",
-            (found["segment"], asset_id),
+            "SELECT paragraph, page, text, strength FROM mentions "
+            "WHERE segment = ? AND asset = ? ORDER BY paragraph, id",
+            (segment, asset_id),
         )
         found["mentions"] = [dict(row) for row in mentions]
         return found
@@ -504,15 +517,6 @@ class PaperStore:
         with _LOCK:
             self.con.execute("INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)", (key, value))
             self.con.commit()
-
-    def update_state(self, key: str, change: Callable[[str | None], str]) -> str:
-        """Replace a state value by change(current value) in one locked step, so parallel tool calls lose no update."""
-        with _LOCK:
-            rows = self.con.execute("SELECT value FROM state WHERE key = ?", (key,)).fetchall()
-            value = change(rows[0][0] if rows else None)
-            self.con.execute("INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)", (key, value))
-            self.con.commit()
-            return value
 
     def close(self) -> None:
         with _LOCK:

@@ -26,9 +26,9 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from reviewer_mcp.document import Line, Page
-from reviewer_mcp.heuristics import Metrics
-from reviewer_mcp.indexes import Section, table_content
+from mcp_pdf_ingestion.document import Line, Page
+from mcp_pdf_ingestion.heuristics import Metrics
+from mcp_pdf_ingestion.indexes import Section, table_content
 
 # "Corresponding author" is deliberately absent: IEEE manuscripts print it as a first-page footnote.
 COVER_FIELD_RE = re.compile(
