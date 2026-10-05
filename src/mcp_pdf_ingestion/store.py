@@ -29,7 +29,7 @@ from mcp_pdf_ingestion.heuristics import DIGEST as HEURISTICS_DIGEST
 from mcp_pdf_ingestion.indexes import build_indexes
 from mcp_pdf_ingestion.structure import build_structure
 
-EXTRACTOR_VERSION = "32"
+EXTRACTOR_VERSION = "34"
 MAX_OPEN_STORES = 8
 
 SCHEMA = """

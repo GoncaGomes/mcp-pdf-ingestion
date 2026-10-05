@@ -48,6 +48,14 @@ def image_reference(document_id: str, asset_id: str) -> str:
     return f"images/{document_id}/{key}"
 
 
+def valid_bounds(bbox: Any) -> bool:
+    """Four finite coordinates with positive extents; never normalize inverted bounds."""
+    try:
+        return len(bbox) == 4 and all(math.isfinite(v) for v in bbox) and bbox[0] < bbox[2] and bbox[1] < bbox[3]
+    except (TypeError, ValueError):
+        return False
+
+
 def _region(page: Any, bbox: Bounds | None) -> dict[str, Any]:
     visible = page.rect * page.derotation_matrix
     requested = list(bbox) if bbox is not None else list(visible)
@@ -69,7 +77,7 @@ def _region(page: Any, bbox: Bounds | None) -> dict[str, Any]:
         result["reason"] = "Bounds must contain four finite coordinates."
         return result
     rect = fitz.Rect(requested)
-    if rect.is_empty or not rect.is_valid:
+    if not valid_bounds(requested) or rect.is_empty or not rect.is_valid:
         result["reason"] = "Bounds must describe a non-empty, non-inverted region."
         return result
     clipped = not visible.contains(rect)

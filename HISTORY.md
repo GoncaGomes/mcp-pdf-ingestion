@@ -650,3 +650,79 @@ earlier evidence is intact and no manual commands were executed.
 MCP-11B stays in_progress pending a successful owner-run live rerun
 and manual evidence review. Preserved unrelated .gitignore change; no Git mutations,
 extraction heuristics, consumer edits, live requests or scientific acceptance.
+
+### 2026-10-05 - Visual evidence acquisition review (review_pending)
+
+Implemented the two owner-authorized deterministic steps on clean main at
+90f2e6112d6cee921b4d11e1399a27bcfb1a7143. Changed source: assets.py, crops.py,
+indexes.py, server.py, store.py; tests: test_assets.py, test_indexes.py,
+test_server.py; documentation: README, PLAN, TODO and this entry.
+
+Step 1 rejects malformed/non-finite/inverted/empty/outside candidates before
+association, including raster, vector clusters and table regions. Zero-extent
+drawing primitives remain usable as table rules. Catalog/get_asset use renderer
+geometry inspection without rendering/model calls; captions and source-page IDs
+survive unavailable crops. Bounds are never swapped. Existing clipping/rotation
+checks and atomic persistence remain. Step 1 focused commands:
+- `.venv/Scripts/python.exe -m unittest discover -s tests -p test_assets.py -q`: 7 run, 6 passed, 1 corpus skip.
+- Same command with `-p test_crops.py`: 12 passed; `-p test_server.py`: 25 passed.
+
+Step 2 uses established prose flow, matching typography, regular spacing and
+column alignment to reject wrapped references. Separate caption labels and panel
+suffixes remain supported; short panel annotations do not establish prose flow.
+Figure regions grow through overlapping/aligned raster/vector neighbors with
+relative gap tolerances, caption placement and text/heading/caption boundaries.
+Small nearby labels are retained where supported. Disconnected equally near
+candidates or plausible regions on both sides can leave no crop. Other unresolved
+or competing candidates lower confidence; figures have at most medium confidence,
+and responses state that candidate availability/clipped=false do not certify all
+panels. Six tools, explicit full-page requests and the single-call model boundary
+are unchanged. No panel splitting, new dependencies/backends or production
+conditions tied to paper identities, numbers, sentences or coordinates.
+
+Step 2 focused commands use the same unittest discovery form:
+- `-p test_assets.py`: 12 run, 11 passed, 1 corpus skip (rows, columns, grids, mixed media, two scales and boundaries).
+- `-p test_indexes.py`: 11 run, 10 passed, 1 corpus skip; `-p test_server.py`: 26 passed; `-p test_crops.py`: 12 passed.
+Initial regression failures exposed a fixture outside the existing caption-gap
+tolerance, wider aligned row gaps, short panel-label flow, and PyMuPDF's assertion
+on malformed drawing bounds. These were corrected before final checks. Real-paper
+inspection also exposed competing above/below candidates; the rule now preserves
+uncertainty instead of selecting the neighboring figure. Static checks initially
+found one docstring length issue and mixed line endings, corrected before rechecks.
+
+Deterministic manual review used the six read-only PDFs under
+`C:/workspace/antenna-six-runs-review/run_*/input/`, with new stores/PNGs only under
+`tmp/visual-evidence-review/`. Original pages were rendered with bundled Poppler
+and compared against PyMuPDF crops and selected-region overlays on 17 pages:
+- 001, page 3: figures 3/4/5 remain separate and match their source regions.
+- 002, pages 2/5: figure 1 retains the raster panel row/labels; figure 4 retains both views.
+- 003, pages 4/10: geometry and the already composite figure 8 remain associated; inherited caption boundaries can still include prose.
+- 004, pages 3/4/6/10: figures 1, 3, 4 and 15 retain their full visible groups/labels; figure 7 stays separate; figure 14 remains unavailable rather than a thin strip.
+- 005, pages 4/6/7/14: figures 2, 7 and 21 retain their groups; wrapped Figure 7d remains text with no separate asset. Several vector plots remain unavailable; figure 6 still misses the vertical axis label/ticks despite fitting page bounds.
+- 006, pages 4/10/12/17: figure 16 retains its grid/labels, figure 11 stays associated; figures 1 and 9/10 remain unavailable where placement/regions are ambiguous. Figure 2 retains only part of its panels with low confidence and source-page provenance.
+
+Across the six catalogs: 74 figure entries, 55 usable regions and 15 groups; these
+are availability counts, not extraction-quality scores. A fresh extraction audit
+confirmed current bounds match the catalog used for visual review, and catalog /
+get_asset geometry agree for all 74 entries. Evidence: final-catalog.json,
+availability-audit.json and verified/<paper>/comparison-page-<N>.png under the
+temporary review directory. Manual review covered the selected 17 pages, not every
+crop. No model calls or original-run writes occurred.
+
+EXTRACTOR_VERSION 32 -> 33 (step 1) -> 34 (step 2) rebuilds stale SQLite stores
+through existing atomic replacement. Fingerprints/schema are unchanged. Existing
+PNG metadata rejects changed bounds; compatible unchanged regions can be reused.
+Stale removed-asset slots may remain unused; no cache deletion/layer was introduced.
+
+Final checks on Windows CPython 3.14.3:
+- `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py" -q`: exit 0, 156 run, 151 passed, 5 REVIEWER_WORKSPACE corpus skips; expected negative-tool diagnostics.
+- `.venv/Scripts/ruff.exe check .`: exit 0; `.venv/Scripts/basedpyright.exe`: exit 0, 0 errors/warnings/notes; `.venv/Scripts/vulture.exe`: exit 0.
+- `.venv/Scripts/ruff.exe format --check` over the five changed source and three changed test files: exit 0.
+- `git diff --check`: exit 0. Logs: tmp/visual-evidence-review/final-*.log and step2-test_*.py.log.
+No pre-existing test/static failure was observed. Corpus tests were skipped;
+Linux/Python 3.12 and live endpoints remain unverified. Missing/incomplete figures
+retain captions, uncertainty and source-page IDs for explicitly requested page:N
+inspection. Owner acceptance is pending; stopped after the two assigned steps.
+No Git mutations, consumer edits, dependencies or inference.
+
+Suggested owner commit: `fix(assets): validate regions and conservatively associate composite figures`.

@@ -1,13 +1,14 @@
 # MCP PDF ingestion task status
 
-Updated: 2026-09-30. Scope: this repository only.
+Updated: 2026-10-05. Scope: this repository only.
 Read `AGENTS.md` and the selected task in `PLAN.md` before editing.
 
 ## Current work
 
 - MCP-01: `done`, consistent with the existing owner-maintained task table.
 - MCP-02: `done`.
-- Assigned block: MCP-11B targeted review fixes (authorized 2026-09-30); no live requests.
+- Assigned block: visual evidence acquisition review (authorized 2026-10-05), two sequential steps; no live requests.
+- Visual evidence review: `review_pending`; steps 1 and 2 `implemented`; owner acceptance pending.
 - MCP-03, MCP-04 and MCP-05: `done`; implementation and batch validation complete.
 - MCP-06 and MCP-07: `done`; implementation and batch validation complete.
 - MCP-08A and MCP-08B: `done`; implementation and batch validation complete.
@@ -16,8 +17,8 @@ Read `AGENTS.md` and the selected task in `PLAN.md` before editing.
 - MCP-11B: `done`; implementation checks passed, real execution/manual review pending.
 
 Statuses: `pending`, `in_progress`, `review_pending`, `done`, `blocked`.
-Only explicit owner acceptance permits `done`. The current targeted review block
-runs focused crop/probe checks and all repository checks once at its final boundary.
+Only explicit owner acceptance permits `done`. The current visual evidence review
+runs focused assets/indexes/server/crop checks and the repository checks at its final boundary.
 
 ## Thread and commit tracking
 
@@ -78,14 +79,15 @@ means its specified checks passed; it does not mean owner acceptance of the task
 
 ## Resume note
 
-- crops._region uses visible.contains(rect) before intersection; bounds/rotation/errors/cache validation retained.
-- scripts/probe_mcp.py requires final text plus visual success; unavailable recovery remains fully recorded.
-- Geometry instructions choose one figure/variant, explicitly request its source page if needed and finish with uncertainties.
-- Probe default/help already 600; tests/README/PLAN now match; +60 MCP margin and eight-turn default retained.
-- Focused: .venv/Scripts/python.exe -m unittest discover -s tests -p test_crops.py -q: 12 passed; same with test_probe_mcp.py: 21 passed.
-- Final: .venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py" -q: 144 run, 139 passed, 5 corpus skips.
-- .venv/Scripts/ruff.exe check ., basedpyright.exe, vulture.exe and git diff --check passed. Logs: tmp/mcp-11b-review-fixes-*.log.
-- Windows checks passed; corpus needs REVIEWER_WORKSPACE; Linux/Python 3.12 unverified. CLI help/editable import/probe installation verified.
-- README documents unused shared probe-runs/microstrip-review-fixes and review outputs; earlier evidence retained.
-- Preserved unrelated .gitignore change; no dependency changes, live requests, consumer edits, Git mutations or owner acceptance.
-- Next: owner reruns the documented 600-second commands and returns JSON/PNG evidence for review; no further block authorized.
+- Visual evidence review: `review_pending`; both authorized steps implemented (2026-10-05), no owner acceptance.
+- Inspected clean main at 90f2e6112d6cee921b4d11e1399a27bcfb1a7143; no Git mutations.
+- Changed assets/crops/indexes/server/store.py; tests/test_assets.py, test_indexes.py, test_server.py; README/PLAN/HISTORY/TODO.
+- Valid candidates/availability share geometry checks; prose flow, bounded grouping and source-page uncertainty retained.
+- EXTRACTOR_VERSION 32 -> 34 rebuilds SQLite; existing PNG bounds metadata rejects incompatible crops.
+- Step 1 focused unittest: assets 7 run/1 skip, crops 12 passed, server 25 passed; exact commands in HISTORY.
+- Step 2 focused unittest: assets 12 run/1 skip, indexes 11 run/1 skip, server 26 passed, crops 12 passed.
+- Final .venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py" -q: 156 run, 151 passed, 5 corpus skips.
+- Ruff, Basedpyright, Vulture, changed-file formatting and git diff --check passed; logs under tmp/visual-evidence-review/.
+- Reviewed 17 source pages from six read-only PDFs; 74 figure entries, 55 usable regions; availability is not complete coverage.
+- Remaining: missing vector/photo regions, incomplete labels/panels, inherited caption boundaries; explicit page:N requests required.
+- Stop here for owner review; no live calls, dependency/consumer/review-run edits; Windows 3.14.3 tested, Python 3.12/Linux unverified.

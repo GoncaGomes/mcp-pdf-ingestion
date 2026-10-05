@@ -540,7 +540,6 @@ class TestCatalog(ServerCase):
             self.assertEqual([item["id"] for item in items], [f"page:{p}" for p in range(1, 18)])
             self.assertTrue(all("content" not in item and "text" not in item for item in items))
             self.assertEqual(server.list_assets(kind="page")["counts"], {"page": 17})
-            self.assertFalse(any(i["kind"] == "page" for i in self.catalog()))
             for args, expected in (
                 ({"first_page": 5}, [5]),
                 ({"last_page": 4}, [1, 2, 3, 4]),
@@ -556,6 +555,71 @@ class TestCatalog(ServerCase):
                     server.list_assets(cursor=changed_cursor(cursor, **changes))
             crop.assert_not_called()
             describe.assert_not_called()
+        self.assertFalse(any(i["kind"] == "page" for i in self.catalog()))
+
+    def test_catalog_and_asset_geometry_agree_without_rendering(self):
+        self.bind_paper("ieee_single")
+        pdf, store = server._open()
+        item = store.assets("figure")[0]
+        canonical = f"segment:{item['segment']}/{item['id']}"
+        for bounds, available in (
+            ((10, 10, 90, 80), True),
+            ((-10, 10, 90, 80), True),
+            ((90, 10, 10, 80), False),
+            ((10, 10, 90, 10), False),
+            ((9000, 10, 9100, 80), False),
+            ((10, 10, float("inf"), 80), False),
+            ((None, 10, 90, 80), False),
+        ):
+            with self.subTest(bounds=bounds), store.con:
+                store.con.execute(
+                    "UPDATE assets SET x0=?, y0=?, x1=?, y1=? WHERE segment=? AND id=?",
+                    (*bounds, item["segment"], item["id"]),
+                )
+                with (
+                    mock.patch.object(server.crops, "cached_png") as render,
+                    mock.patch.object(visual_inspection, "inspect_image") as inspect,
+                ):
+                    entry = next(a for a in self.catalog(kind="figure") if a["id"] == canonical)
+                    detail = json.loads(asset(canonical)[0].text)
+                    self.assertEqual(entry["region_available"], available)
+                    self.assertEqual(detail["region_available"], available)
+                    self.assertEqual(detail["render"]["available"], available)
+                    self.assertEqual(detail["visual_available"], available)
+                    self.assertEqual(detail["caption"], item["caption"])
+                    self.assertEqual(detail["source_page_ids"], [f"page:{item['page']}"])
+                    self.assertEqual(detail["visual"]["status"], "not_requested")
+                    if not available:
+                        unavailable = json.loads(asset(canonical, question="What is visible?")[0].text)
+                        self.assertEqual(unavailable["visual"]["status"], "unavailable")
+                        self.assertTrue(unavailable["render"]["reason"])
+                    render.assert_not_called()
+                    inspect.assert_not_called()
+                if available:
+                    self.assertTrue(server.crops.crop_png(pdf, item["page"], bounds, 80).startswith(b"\x89PNG"))
+                elif bounds[0] is not None:
+                    with self.assertRaises(ValueError):
+                        server.crops.crop_png(pdf, item["page"], bounds, 80)
+
+    def test_uncertain_figure_exposes_source_page_and_coverage_limitations(self):
+        self.bind_paper("ieee_single")
+        _, store = server._open()
+        item = store.assets("figure")[0]
+        canonical = f"segment:{item['segment']}/{item['id']}"
+        for missing in (False, True):
+            with self.subTest(missing=missing), store.con:
+                store.con.execute(
+                    "UPDATE assets SET confidence='low', x0=? WHERE segment=? AND id=?",
+                    (None if missing else item["x0"], item["segment"], item["id"]),
+                )
+                detail = json.loads(asset(canonical)[0].text)
+                self.assertEqual(detail["source_page_ids"], [f"page:{item['page']}"])
+                self.assertEqual(detail["caption"], item["caption"])
+                self.assertEqual(detail["confidence"], "low")
+                self.assertTrue(any("uncertain" in value for value in detail["limitations"]))
+                self.assertTrue(any("complete figure coverage" in value for value in detail["limitations"]))
+                self.assertEqual(detail["region_available"], not missing)
+                self.assertEqual(detail["rendered_pages"], [])
 
     def test_traversal_tie_breaker_duplicates_and_exact_retrieval(self):
         self.bind_paper("scholarone_two_copies")

@@ -183,13 +183,21 @@ def _crowded(lines: list[Line], tolerance: float, spacing: float) -> set[int]:
 
 
 def is_caption(
-    line: Line, metrics: Metrics, opens_paragraph: bool = False, in_caption: bool = False, in_table: bool = False
+    line: Line,
+    metrics: Metrics,
+    opens_paragraph: bool = False,
+    in_caption: bool = False,
+    in_table: bool = False,
+    continues_text: bool = False,
 ) -> bool:
     """A caption is a figure/table/algorithm label, a separator and the caption text: 'Fig. 1. Evolution ...',
     'Table 4: Benchmark datasets'. A label alone on its line is a caption too -- its text is the line below
     ('Table 1' / 'Summary of ...') -- when it opens a paragraph or breaks the caption it follows, since a caption
     holds no paragraph break. A space is not a separator, so 'Table 5 compares ...' is a sentence, not a caption.
-    A label in type smaller than body text is a caption whatever follows it, unless it is a cell of a table."""
+    Smaller type is additional caption evidence, unless the line is a table cell or continues established prose
+    with matching typography and regular text flow. Short panel annotations do not establish that prose flow."""
+    if continues_text:
+        return False  # a physical line break does not turn a running prose reference into a caption
     match = CAPTION_RE.match(line.text)
     if not match:
         return False
@@ -612,8 +620,28 @@ def build_indexes(pages: list[Page], metrics: Metrics) -> tuple[list[Paragraph],
                 or EQUATION_TAG_RE.match(previous.text) is not None
             )
             # numbered items carry on past the References: floats set at the end, and appendices
+            continues_text = (
+                current is not None
+                and current.kind == "text"
+                and previous is not None
+                and SENTENCE_END_RE.search(previous.text) is None
+                and len(re.findall(r"\b[A-Za-z]{2,}\b", previous.text)) >= 3
+                and metrics.same_size(line.size, previous.size)
+                and _style(line) == _style(previous)
+                and (
+                    line.page != previous.page
+                    or line.column != previous.column
+                    or overlap_limit <= line.y0 - previous.y1 <= gap_limit
+                )
+                and abs(line.x0 - lefts.get(line.column, line.x0)) <= INDENT * metrics.body_size
+            )
             caption = is_caption(
-                line, metrics, opens, current is not None and current.kind == "caption", line.id in cells
+                line,
+                metrics,
+                opens,
+                current is not None and current.kind == "caption",
+                line.id in cells,
+                continues_text,
             )
             if current is not None and previous is not None and not reference_start:
                 same_flow = line.page == previous.page and line.column == previous.column

@@ -75,7 +75,17 @@ separate. Use catalog IDs unchanged: short IDs such as `figure:1` are rejected. 
 
 `page:N` selects the one-based physical PDF page, including its stored text (possibly empty) and full visible
 page. Missing text does not prevent rendering. Leading zeros, invalid IDs and pages outside the PDF are errors.
-`region_available` reports coordinate presence; `visual_available` reports validated geometry.
+`region_available` and `visual_available` report usable geometry, including a non-empty intersection with the
+visible source page. The catalog validates bounds without rendering or invoking a model. Invalid candidates
+are excluded before caption association; inverted coordinates are never swapped to invent a region.
+Caption detection checks surrounding prose, typography, spacing and column alignment; a wrapped reference
+does not become a caption just because its label begins a physical line. Separate caption labels and panel
+suffixes remain supported. Figure association starts from a nearby region of usable figure size and grows
+through aligned raster/vector neighbors, respecting intervening prose, headings and other captions. Nearby
+small labels are retained where layout supports them; no automatic panel splitting is performed.
+Clear figure associations have `confidence="medium"`; unresolved neighbors lower it to `low`. Equally near
+disconnected candidates or plausible regions both above and below a caption can leave the region unavailable.
+These rules are conservative, not universal figure extraction, and may leave valid figures for full-page review.
 Without a question (or with `question=null`), the server returns deterministic content and
 `visual.status="not_requested"`: zero model calls, no visual credentials loaded, no rendering,
 PNG creation or decoded image-cache lookup. Blank/non-string questions are rejected before rendering.
@@ -95,7 +105,9 @@ non-finite or fully outside regions return an unavailable reason and preserve te
 no image was prepared for inspection; `visual_coverage` is then `none`. A multipage numbered asset renders only its existing
 first-page region, declares `partial` coverage and gives page IDs for explicit follow-up. Clipped images also
 declare partial coverage; otherwise coverage is `single_page`. `limitations` explains these cases. There is no
-stitching or region inference. These exact coverage fields and limitations reach both the model prompt and
+stitching or region inference. An available numbered crop is an associated candidate region, not certified
+complete figure coverage. `clipped=false` means the region fits the page; it does not establish that all panels
+were included. These exact coverage fields and limitations reach both the model prompt and
 `visual` result. A prepared image does not establish a successful observation; check `visual.status`.
 Overview does not reset consumption state; stale counters have no effect. Deterministic access remains repeatable.
 
@@ -114,6 +126,9 @@ misses; render/write failures are reported and preserve a previous valid PNG. Ea
 successful render settings. There is no answer cache, cache database or new document hashing scheme.
 Corrected clipping metadata can invalidate an older falsely-clipped entry once; normal metadata validation
 then reuses the corrected PNG. No cache deletion or fingerprint/schema change is needed.
+The 2026-10-05 extraction changes bump the existing extractor version from 32 to 34, rebuilding stale SQLite
+stores in place through the established atomic mechanism. Changed region bounds invalidate incompatible PNGs
+through their existing embedded metadata; unchanged regions can reuse compatible images. No new cache layer.
 
 ### Visual results and diagnostics
 
@@ -283,6 +298,13 @@ Linux/Python 3.12 execution remains unverified for these fixes. The owner-run 60
 and their manual evidence review remain pending; no live model requests ran during implementation.
 Live visual endpoints, scientific acceptance and consumer integration remain unverified. MCP-11B remains
 pending real execution/manual review, independently of successful local implementation checks.
+
+The 2026-10-05 visual evidence review passed local discovery (156 run, 151 passed, five opt-in corpus skips),
+Ruff, Basedpyright, Vulture and changed-file formatting checks on the same Windows CPython 3.14.3 environment.
+Seventeen original pages from six review PDFs were compared with selected crops in isolated temporary runs.
+Composite groups and wrapped-reference handling improved; missing regions and incomplete vector labels/panels
+remain, including crops whose bounds fit the page. Detailed cases and checks are in HISTORY; owner acceptance,
+Linux/Python 3.12 execution and live inference remain unverified.
 
 ## Optional real-paper probes
 

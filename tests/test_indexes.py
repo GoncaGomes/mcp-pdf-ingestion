@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 import pymupdf as fitz
-from pdf_fixtures import IsolatedTestCase, build_fixture
+from pdf_fixtures import IsolatedTestCase, PaperBuilder, build_fixture, filler
 
 from mcp_pdf_ingestion.store import PaperStore, close_all
 
@@ -47,6 +47,66 @@ class TestParagraphsAndSections(IsolatedTestCase):
     def setUp(self):
         super().setUp()
         self.addCleanup(close_all)
+
+    def test_wrapped_references_remain_text_in_body_and_smaller_type(self):
+        for size in (8, 10):
+            with self.subTest(size=size):
+                builder = PaperBuilder()
+                builder.new_page()
+                builder.paragraph(filler(1, 3))
+                builder.line("The measured response is shown in", size=size)
+                builder.line("Figure 7d.", size=size)
+                builder.line("The configuration also appears in", size=size)
+                builder.line("Fig. 3(a). Further discussion follows.", size=size)
+                builder.y += 20
+                builder.paragraph(filler(2, 3))
+                store = PaperStore.open(builder.save(self.tmp_path / f"references-{size}.pdf"))
+                self.assertEqual(store.assets("figure"), [])
+                paragraphs = store.paragraphs()
+                for reference in ("Figure 7d.", "Fig. 3(a)."):
+                    containing = [p for p in paragraphs if reference in p["text"]]
+                    self.assertTrue(containing)
+                    self.assertTrue(all(p["kind"] == "text" for p in containing))
+                    self.assertIn(reference, store.pages(1, 1)[0]["text"])
+
+    def test_standalone_caption_labels_and_panel_suffixes_remain_supported(self):
+        builder = PaperBuilder()
+        builder.new_page()
+        builder.paragraph(filler(1, 3))
+        for label, size in (("Figure 5", 10), ("Fig. 6(b).", 8)):
+            builder.y += 24
+            builder.line(label, size=size)
+            builder.line("Independent view of the configuration.", size=size)
+        builder.y += 24
+        builder.paragraph(filler(2, 3))
+        store = PaperStore.open(builder.save(self.tmp_path / "separate-labels.pdf"))
+        self.assertEqual([a["id"] for a in store.assets("figure")], ["figure:5", "figure:6b"])
+        self.assertTrue(all("Independent view" in a["caption"] for a in store.assets("figure")))
+
+    def test_panel_annotations_do_not_turn_following_captions_into_prose(self):
+        builder = PaperBuilder()
+        builder.new_page()
+        builder.paragraph(filler(1, 3))
+        for size, number in ((8, 1), (10, 2)):
+            builder.y += 24
+            builder.line("(b)", size=size)
+            builder.line(f"Figure {number}. Views of the configuration.", size=size)
+        builder.y += 24
+        builder.paragraph(filler(2, 3))
+        store = PaperStore.open(builder.save(self.tmp_path / "caption-after-panel-label.pdf"))
+        self.assertEqual([a["id"] for a in store.assets("figure")], ["figure:1", "figure:2"])
+
+    def test_wrapped_reference_across_a_page_boundary_remains_text(self):
+        builder = PaperBuilder()
+        builder.new_page()
+        builder.paragraph(filler(1, 3))
+        builder.line("The measured configuration is shown in")
+        builder.new_page()
+        builder.line("Figure 4(a). Further details follow.")
+        builder.paragraph(filler(2, 3))
+        store = PaperStore.open(builder.save(self.tmp_path / "reference-page-break.pdf"))
+        self.assertEqual(store.assets("figure"), [])
+        self.assertTrue(any("Figure 4(a)." in p["text"] and p["kind"] == "text" for p in store.paragraphs()))
 
     def test_paragraph_rules(self):
         store = PaperStore.open(paragraph_pdf(self.tmp_path / "paragraphs.pdf"))

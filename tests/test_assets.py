@@ -1,9 +1,14 @@
 import os
 import unittest
 from pathlib import Path
+from unittest import mock
 
+import pymupdf as fitz
 from pdf_fixtures import IsolatedTestCase, PaperBuilder, build_fixture, filler
 
+from mcp_pdf_ingestion import assets
+from mcp_pdf_ingestion.document import Page
+from mcp_pdf_ingestion.heuristics import Metrics
 from mcp_pdf_ingestion.store import PaperStore, close_all
 
 REAL_WORKSPACE = os.environ.get("REVIEWER_WORKSPACE", "")
@@ -27,17 +32,185 @@ def numbered(values: list[str]) -> list[str]:
     return sorted(values, key=lambda value: int(value.split(":")[1]))
 
 
+def layout_pdf(path: Path, regions, captions, *, labels=(), text=(), scale=1):
+    """Independent raster/vector regions and explicit text flow, without publication-specific content."""
+    with fitz.open() as doc:
+        page = doc.new_page(width=520 * scale, height=600 * scale)
+        for y in (35, 49, 63, 550, 564, 578):
+            page.insert_text((55 * scale, y * scale), filler(int(y), 1), fontsize=10 * scale, fontname="tiro")
+        for kind, bounds in regions:
+            rect = fitz.Rect([v * scale for v in bounds])
+            if kind == "image":
+                pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 40, 30), False)
+                pix.set_rect(pix.irect, (90, 140, 200))
+                page.insert_image(rect, pixmap=pix, keep_proportion=False)
+            else:
+                page.draw_rect(rect, color=(0, 0, 0), fill=(0.8, 0.9, 0.8))
+        for x, y, value in [*captions, *labels]:
+            page.insert_text((x * scale, y * scale), value, fontsize=8 * scale, fontname="tiro")
+        for x, y, value in text:
+            page.insert_text((x * scale, y * scale), value, fontsize=10 * scale, fontname="tiro")
+        doc.save(path)
+    return path
+
+
 class TestAssets(IsolatedTestCase):
     def setUp(self):
         super().setUp()
         self.addCleanup(close_all)
+
+    def test_invalid_candidates_are_excluded_before_association(self):
+        metrics = Metrics("Times", 10, 13)
+        valid = (40, 90, 200, 170)
+        invalid = [
+            (200, 160, 40, 195),
+            (40, 195, 200, 160),
+            (40, 195, 40, 198),
+            (40, 190, float("inf"), 198),
+            (40, float("nan"), 200, 198),
+            (40, 190, 200),
+        ]
+        choice = assets._nearest(
+            (40, 200, 200, 212), [("caption+image", "high", r) for r in [*invalid, valid]], (40, 200), metrics
+        )
+        self.assertEqual(choice[2], valid)
+        self.assertIsNone(assets._nearest((40, 200, 200, 212), [("image", "high", invalid[0])], (40, 200), metrics))
+        outside = (310, 190, 350, 198)
+        partial = (-10, 90, 30, 150)
+        with fitz.open() as doc:
+            pdf_page = doc.new_page(width=300, height=400)
+            data = {"blocks": [{"type": 1, "bbox": r} for r in [*invalid, outside, partial, valid]]}
+            tables = mock.Mock(tables=[mock.Mock(bbox=r) for r in [*invalid, outside, valid]])
+            with (
+                mock.patch.object(fitz.Page, "get_text", return_value=data),
+                mock.patch.object(fitz.Page, "get_drawings", return_value=[{"rect": r} for r in [*invalid, valid]]),
+                mock.patch.object(fitz.Page, "find_tables", return_value=tables),
+                mock.patch.object(assets, "_ruled_regions", return_value=[*invalid, outside, valid]),
+            ):
+                found = assets._geometry(pdf_page, Page(1, 300, 400, "", "text", 2, 0), True, metrics, (0, 400))
+        self.assertEqual(found.images, sorted([partial, valid]))
+        self.assertEqual(found.tables, [valid])
+        self.assertEqual(found.shapes, [valid])
+        self.assertEqual(found.ruled, [valid])
+
+    def test_composites_group_rows_columns_and_grids_at_relative_scales(self):
+        layouts = [
+            [(55, 100, 210, 250), (290, 100, 445, 250)],
+            [(55, 100, 170, 230), (185, 100, 300, 230), (315, 100, 430, 230)],
+            [(90, 90, 300, 180), (90, 200, 300, 290), (90, 310, 300, 400)],
+            [(55, 90, 220, 220), (245, 90, 410, 220), (55, 245, 220, 375), (245, 245, 410, 375)],
+        ]
+        for index, rects in enumerate(layouts):
+            for scale in (0.8, 1.4):
+                with self.subTest(layout=index, scale=scale):
+                    bottom = max(r[3] for r in rects)
+                    labels = [((r[0] + r[2]) / 2, r[3] + 8, f"({chr(97 + i)})") for i, r in enumerate(rects)]
+                    pdf = layout_pdf(
+                        self.tmp_path / f"group-{index}-{scale}.pdf",
+                        [("image" if i % 2 == 0 else "drawing", r) for i, r in enumerate(rects)],
+                        [
+                            (
+                                55,
+                                bottom + 26,
+                                "Fig. 12. Independent views of the configuration and its measured response.",
+                            )
+                        ],
+                        labels=labels,
+                        scale=scale,
+                    )
+                    store = PaperStore.open(pdf)
+                    self.assertEqual(ids(store, "figure"), ["figure:12"])
+                    figure = exact_asset(store, "figure:12")
+                    self.assertEqual((figure["method"], figure["confidence"]), ("caption+group", "medium"))
+                    for r in rects:
+                        self.assertLessEqual(figure["x0"], r[0] * scale + 0.02)
+                        self.assertLessEqual(figure["y0"], r[1] * scale + 0.02)
+                        self.assertGreaterEqual(figure["x1"], r[2] * scale - 0.02)
+                        self.assertGreaterEqual(figure["y1"], r[3] * scale - 0.02)
+                    self.assertGreater(figure["y1"], bottom * scale)
+                    self.assertLess(figure["y1"], (bottom + 26 - 8) * scale)
+                    for _, _, label in labels:
+                        self.assertIn(label, figure["content"])
+
+    def test_neighboring_figures_with_distinct_captions_remain_separate(self):
+        for arrangement, regions, captions in (
+            (
+                "row",
+                [(55, 100, 210, 260), (285, 100, 450, 260)],
+                [(55, 280, "Fig. 2. First view."), (285, 280, "Fig. 3. Second view.")],
+            ),
+            (
+                "column",
+                [(90, 100, 300, 230), (90, 310, 300, 440)],
+                [(90, 250, "Fig. 2. First view."), (90, 460, "Fig. 3. Second view.")],
+            ),
+            (
+                "top-captions",
+                [(90, 100, 300, 230), (90, 310, 300, 440)],
+                [(90, 80, "Fig. 2. First view."), (90, 290, "Fig. 3. Second view.")],
+            ),
+        ):
+            with self.subTest(arrangement=arrangement):
+                store = PaperStore.open(
+                    layout_pdf(
+                        self.tmp_path / f"neighbors-{arrangement}.pdf", [("image", r) for r in regions], captions
+                    )
+                )
+                self.assertEqual(ids(store, "figure"), ["figure:2", "figure:3"])
+                for asset_id, rect in zip(ids(store, "figure"), regions, strict=True):
+                    item = exact_asset(store, asset_id)
+                    self.assertEqual(tuple(item[k] for k in ("x0", "y0", "x1", "y1")), rect)
+                    self.assertEqual(item["confidence"], "medium")
+
+    def test_intervening_prose_stops_a_group(self):
+        regions = [(90, 100, 300, 210), (90, 265, 300, 380)]
+        pdf = layout_pdf(
+            self.tmp_path / "text-boundary.pdf",
+            [("image", r) for r in regions],
+            [(90, 400, "Fig. 8. The lower configuration.")],
+            text=[(90, 245, "These separate results require their own discussion.")],
+        )
+        item = exact_asset(PaperStore.open(pdf), "figure:8")
+        self.assertEqual((item["y0"], item["y1"]), (265, 380))
+        self.assertNotIn("separate results", item["content"])
+
+    def test_caption_between_plausible_figures_does_not_choose_the_next_figure(self):
+        store = PaperStore.open(
+            layout_pdf(
+                self.tmp_path / "caption-between-figures.pdf",
+                [("image", (90, 100, 300, 250)), ("image", (90, 292, 300, 420))],
+                [(90, 282, "Fig. 4. First configuration."), (90, 440, "Fig. 5. Next configuration.")],
+            )
+        )
+        first = exact_asset(store, "figure:4")
+        self.assertIsNone(first["x0"])
+        self.assertEqual(first["confidence"], "low")
+        self.assertEqual(first["page"], 1)
+        second = exact_asset(store, "figure:5")
+        self.assertIsNone(second["x0"])
+        self.assertEqual(second["confidence"], "low")
+
+    def test_disconnected_candidates_preserve_uncertainty_and_caption(self):
+        for delta, expected_region in ((20, True), (6, False)):
+            with self.subTest(delta=delta):
+                bottom = 270 + delta
+                pdf = layout_pdf(
+                    self.tmp_path / f"uncertain-{delta}.pdf",
+                    [("image", (55, 100, 210, 270)), ("image", (300, 120, 455, bottom))],
+                    [(55, bottom + 18, "Fig. 9. Independent views of the configuration and its measured response.")],
+                )
+                item = exact_asset(PaperStore.open(pdf), "figure:9")
+                self.assertEqual(item["confidence"], "low")
+                self.assertEqual(item["page"], 1)
+                self.assertTrue(item["caption"].startswith("Fig. 9."))
+                self.assertEqual(item["x0"] is not None, expected_region)
 
     def test_ieee_fixture_assets(self):
         store = PaperStore.open(build_fixture("ieee_single", self.tmp_path))
         figures = {asset["id"]: asset for asset in store.assets("figure")}
         self.assertEqual(ids(store, "figure"), ["figure:1", "figure:2", "figure:3"])
         self.assertEqual([figures[i]["page"] for i in ids(store, "figure")], [5, 9, 10])
-        self.assertTrue(all(a["method"] == "caption+image" and a["confidence"] == "high" for a in figures.values()))
+        self.assertTrue(all(a["method"] == "caption+image" and a["confidence"] == "medium" for a in figures.values()))
         self.assertIn("Accuracy (%)", figures["figure:1"]["content"])
         self.assertTrue(figures["figure:1"]["caption"].startswith("Fig. 1."))
         self.assertGreaterEqual(figures["figure:1"]["cited"], 1)

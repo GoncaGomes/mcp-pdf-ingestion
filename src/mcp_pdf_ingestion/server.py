@@ -158,11 +158,17 @@ def _public_asset_id(item: dict[str, Any]) -> str:
     return f"segment:{item['segment']}/{item['id']}"
 
 
-def _region_available(item: dict[str, Any]) -> bool:
-    return all(item[key] is not None for key in ("x0", "y0", "x1", "y1"))
+def _region_available(item: dict[str, Any], pdf: Path) -> bool:
+    bbox = tuple(item[key] for key in ("x0", "y0", "x1", "y1"))
+    if any(value is None for value in bbox):
+        return False
+    try:
+        return crops.describe_region(pdf, item["page"], bbox)["available"]
+    except (OSError, RuntimeError, ValueError):
+        return False
 
 
-def _asset_entry(item: dict[str, Any]) -> dict[str, Any]:
+def _asset_entry(item: dict[str, Any], pdf: Path) -> dict[str, Any]:
     return {
         "id": _public_asset_id(item),
         "label": item["label"],
@@ -171,7 +177,7 @@ def _asset_entry(item: dict[str, Any]) -> dict[str, Any]:
         "last_page": item["last_page"],
         "caption_preview": " ".join(item["caption"].split())[:CAPTION_PREVIEW],
         "cited_count": item["cited"],
-        "region_available": _region_available(item),
+        "region_available": _region_available(item, pdf),
     }
 
 
@@ -201,7 +207,7 @@ def list_assets(
     """List up to 20 assets with IDs and source spans. Default: numbered assets including references; page selects
     only full pages in ascending order. Inclusive ranges select overlap. Counts cover the full filtered result.
     Continue with next_cursor until null. Catalogs never render images or include full text."""
-    _, store = _open()
+    pdf, store = _open()
     document_id = store.meta()["fingerprint"]
     offset = 0
     if cursor is not None:
@@ -224,7 +230,9 @@ def list_assets(
     if kind == "page":
         shown = [_page_entry(page) for page in range(first + offset, min(last + 1, first + offset + ASSET_PAGE_SIZE))]
     else:
-        shown = [_asset_entry(item) for item in store.assets(kind, first, last, limit=ASSET_PAGE_SIZE, offset=offset)]
+        shown = [
+            _asset_entry(item, pdf) for item in store.assets(kind, first, last, limit=ASSET_PAGE_SIZE, offset=offset)
+        ]
     next_cursor = None
     if offset + len(shown) < total:
         next_cursor = reading._encode_cursor(
@@ -318,8 +326,9 @@ def _resolve_asset(asset_id: str) -> tuple[Path, dict[str, Any], crops.Bounds | 
         "cited_count": len(mentions),
         "cited_by": cited_by,
     }
-    bbox = (found["x0"], found["y0"], found["x1"], found["y1"]) if _region_available(found) else None
-    detail["region_available"] = _region_available(found)
+    values = tuple(found[key] for key in ("x0", "y0", "x1", "y1"))
+    bbox = values if all(value is not None for value in values) else None
+    detail["region_available"] = bbox is not None
     return pdf, detail, bbox
 
 
@@ -331,7 +340,13 @@ def _describe_asset(pdf: Path, detail: dict[str, Any], bbox: crops.Bounds | None
     detail["limitations"] = (
         ["Only the first-page region is available for this multipage asset."] if last > first else []
     )
-    if detail["region_available"]:
+    if detail["kind"] == "figure":
+        detail["limitations"].append("An associated candidate region does not certify complete figure coverage.")
+        if detail.get("confidence") == "low":
+            detail["limitations"].append(
+                "Caption association is uncertain; explicitly request a source page if needed."
+            )
+    if bbox is not None or detail["kind"] == "page":
         region = crops.describe_region(pdf, first, bbox)
     else:
         region = {
@@ -343,6 +358,7 @@ def _describe_asset(pdf: Path, detail: dict[str, Any], bbox: crops.Bounds | None
             "clipped": False,
         }
     detail["render"] = region
+    detail["region_available"] = region["available"]
     detail["visual_available"] = region["available"]
     if region["clipped"]:
         detail["limitations"].append("The region was clipped to the visible page.")
@@ -358,6 +374,7 @@ async def _asset_response(
     try:
         await asyncio.to_thread(_describe_asset, pdf, detail, bbox)
     except (OSError, RuntimeError, ValueError):
+        detail["region_available"] = False
         detail["visual_available"] = False
         detail["render"] = {"available": False, "reason": "Source geometry could not be read."}
     result: dict[str, Any] = {"status": "not_requested"}

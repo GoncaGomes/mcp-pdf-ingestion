@@ -403,7 +403,8 @@ extractor or rewrite detection rules. Rendering changes belong to MCP-08.
 
 Implementation note (2026-09-27): retain `get_asset(asset_id, include_image=False)`
 until MCP-09B. Public IDs encode the existing segment/stored-ID pair; SQLite keys
-and extraction are unchanged. `region_available` reports coordinate presence only;
+and extraction are unchanged. `region_available` initially reported coordinate presence only
+(superseded by the 2026-10-05 visual evidence review);
 `image_status` distinguishes not_requested/missing_region/disabled/attached.
 Existing multipage crops identify their first-page-only coverage. Remove obsolete
 quota overrides; existing strict config validation rejects `images.budget`.
@@ -663,6 +664,26 @@ a specific blocker for this task, not a reason to redo the local implementation.
 
 **Suggested owner commit after acceptance:**
 `feat(probes): add optional direct MCP and Agents SDK paper checks`
+
+### Visual evidence acquisition review — authorized 2026-10-05
+
+Two sequential steps, restricted to deterministic extraction and existing response/cache structures:
+1. Validate finite, positive candidate regions and their visible-page intersection before association.
+   Catalog availability must agree with geometry inspection without rendering/model calls; retain missing-region
+   captions and source pages. Preserve renderer bounds, clipping and rotation checks.
+2. Reject wrapped prose references using text flow/typography while retaining separate caption labels.
+   Conservatively group aligned raster/vector regions for one caption, respecting intervening text/other captions.
+   Retain uncertain association and provenance; raster presence alone must not imply high confidence.
+
+Use relative layout tolerances; no publication-specific rules, panel splitting, dependencies, hidden calls,
+automatic page fallback or extraction-perfection requirement. An available crop is a candidate association;
+neither availability nor `clipped=false` certifies all panels. The external agent explicitly requests `page:N`.
+Bump the existing extractor version; existing PNG region metadata prevents reuse after bounds change.
+Run focused regressions after each step, then the repository checks once at the final boundary. Inspect review
+PDFs read-only in isolated temporary runs, comparing selected bounds/crops with source pages. Leave local edits
+`review_pending`, record limitations and stop after these two steps; owner acceptance remains separate.
+
+**Suggested owner commit:** `fix(assets): validate regions and conservatively associate composite figures`
 
 ## 5. Completion and deferred work
 

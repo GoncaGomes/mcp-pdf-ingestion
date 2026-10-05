@@ -4,8 +4,10 @@ Kinds covered: figure, table, equation, algorithm, listing and reference. Tolera
 document's body size and line height (see ``heuristics``):
 - figure/table captions are caption paragraphs starting with a label (``FIGURE 3.``, ``Fig. 1.``,
   ``TABLE I``, ``Table 1:``, ``Fig. 5(a).``); the region is the nearest raster image, vector-drawing cluster or table
-  found by PyMuPDF ``find_tables`` above or below the caption whose centre lies in the caption's column. A table
-  is limited by its rules, not by the page: it ends at its last rule, so when no further rule of its own follows
+  found by PyMuPDF ``find_tables`` above or below the caption whose centre lies in the caption's column. Figure
+  candidates must have usable geometry; aligned raster/vector neighbors can form a group bounded by text and
+  other captions. Ambiguous placement retains a low-confidence candidate or no region, never a coverage guarantee.
+  A table is limited by its rules, not by the page: it ends at its last rule, so when no further rule of its own follows
   and the next page opens with rules with the same ends, it carries on there (``last_page``);
 - equations are lines holding only ``(n)`` that are the rightmost item of their row, in the right half
   of the column; the equation text is the rest of that row;
@@ -21,6 +23,7 @@ document's body size and line height (see ``heuristics``):
 
 from __future__ import annotations
 
+import math
 import re
 import statistics
 from bisect import bisect_left, bisect_right
@@ -31,6 +34,7 @@ from typing import Any
 
 import pymupdf as fitz
 
+from mcp_pdf_ingestion import crops
 from mcp_pdf_ingestion.document import Line, Page
 from mcp_pdf_ingestion.equations import equation_text
 from mcp_pdf_ingestion.heuristics import (
@@ -188,15 +192,32 @@ def _geometry(
         # of a page lie inside it even when no text line precedes them on that page
         return rect[3] <= top or rect[1] >= bottom
 
+    def candidate(values: Any) -> Rect | None:
+        if not crops.valid_bounds(values):
+            return None
+        rect = _rect(values)
+        return rect if crops._region(pdf_page, rect)["available"] else None
+
     geometry = _Geometry()
     data: Any = pdf_page.get_text("dict")
     for block in data.get("blocks", []):
         if block.get("type") == 1:
-            rect = _rect(block["bbox"])
-            if not beyond_text(rect):
+            rect = candidate(block["bbox"])
+            if rect is not None and not beyond_text(rect):
                 geometry.images.append(rect)
     pieces: list[Rect] = []
     for drawing in pdf_page.get_drawings():
+        # Zero-height/width drawing primitives can be table rules, but inverted or
+        # non-finite primitives must not contaminate clusters into usable regions.
+        try:
+            values = drawing["rect"]
+            if len(values) != 4 or not all(math.isfinite(v) for v in values):
+                continue
+            raw = fitz.Rect(values)
+        except (TypeError, ValueError):
+            continue
+        if not raw.is_valid or raw.is_infinite:
+            continue
         rect = _rect(drawing["rect"])
         width, height = rect[2] - rect[0], rect[3] - rect[1]
         if beyond_text(rect):
@@ -206,12 +227,15 @@ def _geometry(
         elif height > RULE_MAX_THICKNESS * em and width > RULE_MAX_THICKNESS * em:
             pieces.append(rect)
     if with_tables:
-        geometry.tables = [_rect(table.bbox) for table in pdf_page.find_tables().tables]
+        geometry.tables = [
+            rect for table in pdf_page.find_tables().tables if (rect := candidate(table.bbox)) is not None
+        ]
     geometry.shapes = [
-        _with_labels(cluster, page, metrics)
+        cluster
         for cluster in _cluster(pieces, SAME_ROW * line_height)
         if cluster[3] - cluster[1] >= FIGURE_MIN_HEIGHT * line_height
         and cluster[2] - cluster[0] >= FIGURE_MIN_WIDTH * em
+        and candidate(cluster) is not None
     ]
     geometry.images = sorted(set(geometry.images))
     geometry.rules.sort()
@@ -220,19 +244,23 @@ def _geometry(
         geometry.joined = sorted(
             _join_rules(geometry.rules, RULE_MAX_THICKNESS * em, RULE_ALIGNMENT * em), key=lambda rule: rule[1]
         )
-        geometry.ruled = _ruled_regions(geometry.joined, page, metrics)
+        geometry.ruled = [
+            rect for rect in _ruled_regions(geometry.joined, page, metrics) if candidate(rect) is not None
+        ]
     return geometry
 
 
-def _with_labels(region: Rect, page: Page, metrics: Metrics) -> Rect:
+def _with_labels(region: Rect, page: Page, metrics: Metrics, captions: list[Line]) -> Rect:
     """A drawing extended by the lines in smaller type next to it (axis labels, legends, sub-captions): each added line
     lies on the page, within a line height of the region and inside its width, and no caption label lies between
     it and the region (the region never grows into a caption)."""
-    captions = [line for line in page.body_lines() if CAPTION_RE.match(line.text)]
     labels = [
         line
         for line in page.body_lines()
-        if metrics.smaller(line.size) and 0 <= line.y0 and line.y1 <= page.height and line not in captions
+        if (metrics.smaller(line.size) or re.fullmatch(r"\(?[a-z]\)?", line.text.strip()))
+        and 0 <= line.y0
+        and line.y1 <= page.height
+        and line not in captions
     ]
     grown = region
     changed = True
@@ -770,6 +798,8 @@ def _nearest(
     best: tuple[float, int, tuple[str, str, Rect]] | None = None
     for option in options:
         rect = option[2]
+        if not crops.valid_bounds(rect):
+            continue
         crosses_column = rect[0] < x_range[1] - align < x_range[1] + align < rect[2] or (
             rect[0] < x_range[0] - align < x_range[0] + align < rect[2]
         )
@@ -779,6 +809,108 @@ def _nearest(
             if lowest <= distance <= highest and (best is None or (distance, preference) < (best[0], best[1])):
                 best = (distance, preference, option)
     return best[2] if best else None
+
+
+def _figure_region(
+    caption: Rect,
+    options: list[tuple[str, str, Rect]],
+    page: Page,
+    column: int,
+    metrics: Metrics,
+    captions: list[Rect],
+    text: list[Rect],
+    labels: list[Line],
+) -> tuple[str, str, Rect] | None:
+    """Grow a caption's nearest candidate through aligned regions, bounded by text and other captions.
+
+    Raster presence is not confidence evidence. Unresolved neighbors lower confidence; equally near
+    disconnected candidates leave no region. A group still does not certify complete panel coverage.
+    """
+    gap = CAPTION_REGION * metrics.line_height
+    align = RULE_ALIGNMENT * metrics.body_size
+
+    def blocked(a: Rect, b: Rect) -> bool:
+        envelope = _union(a, b)
+        return any(c != caption and _near(c, envelope, 0) for c in captions) or any(
+            _centre_inside(t, envelope) and not _centre_inside(t, a) and not _centre_inside(t, b) for t in text
+        )
+
+    def distance(rect: Rect, cap: Rect = caption) -> float:
+        return max(cap[1] - rect[3], rect[1] - cap[3], 0)
+
+    def owned(rect: Rect) -> bool:
+        mine = (distance(rect), abs((rect[0] + rect[2]) - (caption[0] + caption[2])))
+        return not any(
+            c != caption
+            and min(c[2], rect[2]) > max(c[0], rect[0])
+            and (distance(rect, c), abs((rect[0] + rect[2]) - (c[0] + c[2]))) <= mine
+            for c in captions
+        )
+
+    usable = [o for o in options if crops.valid_bounds(o[2]) and owned(o[2])]
+    seeds = [
+        o
+        for o in usable
+        if not blocked(o[2], caption)
+        and o[2][2] - o[2][0] >= FIGURE_MIN_WIDTH * metrics.body_size
+        and o[2][3] - o[2][1] >= FIGURE_MIN_HEIGHT * metrics.line_height
+    ]
+    x_range = _column_range(page, column)
+    above_choice = _nearest(caption, [o for o in seeds if o[2][3] <= caption[1]], x_range, metrics)
+    below_choice = _nearest(caption, [o for o in seeds if o[2][1] >= caption[3]], x_range, metrics)
+    if above_choice is not None and below_choice is not None:
+        return None  # caption placement between two plausible figures does not establish ownership
+    choice = _nearest(caption, seeds, x_range, metrics)
+    if choice is None:
+        return None
+    region = choice[2]
+    above = region[3] <= caption[1] + SAME_ROW * metrics.line_height
+    remaining = [
+        o[2]
+        for o in usable
+        if o != choice
+        and (
+            o[2][3] <= caption[1] + SAME_ROW * metrics.line_height
+            if above
+            else o[2][1] >= caption[3] - SAME_ROW * metrics.line_height
+        )
+    ]
+    members = [region]
+
+    def connected(a: Rect, b: Rect) -> bool:
+        same_row = (abs(a[1] - b[1]) <= align and abs(a[3] - b[3]) <= align) or (
+            abs((a[1] + a[3]) - (b[1] + b[3])) <= 2 * align
+        )
+        same_column = abs(a[0] - b[0]) <= align and abs(a[2] - b[2]) <= align
+        caption_spans = caption[0] - align <= min(a[0], b[0]) and max(a[2], b[2]) <= caption[2] + align
+        row_gap = max(gap, min(a[2] - a[0], b[2] - b[0]))
+        return (
+            _near(a, b, 0)
+            or (same_row and (caption_spans or _near(a, b, row_gap)))
+            or (same_column and _near(a, b, gap))
+        )
+
+    changed = True
+    while changed:
+        changed = False
+        for rect in list(remaining):
+            if any(connected(rect, anchor) for anchor in [*members, region]) and not blocked(region, rect):
+                region = _union(region, rect)
+                members.append(rect)
+                remaining.remove(rect)
+                changed = True
+    unresolved = [r for r in remaining if distance(r) <= gap and not blocked(r, caption)]
+    if any(abs(distance(r) - distance(choice[2])) <= SAME_ROW * metrics.line_height for r in unresolved):
+        return None
+    competing = any(
+        not owned(o[2]) and distance(o[2]) <= gap and not blocked(o[2], caption)
+        for o in options
+        if crops.valid_bounds(o[2])
+    )
+    grown = _with_labels(region, page, metrics, labels)
+    if not blocked(region, grown):
+        region = grown
+    return ("caption+group" if len(members) > 1 else choice[0], "low" if unresolved or competing else "medium", region)
 
 
 def _rows(lines: list[Line], tolerance: float) -> list[str]:
@@ -890,6 +1022,34 @@ def build_assets(
         if match:
             kind = "figure" if match.group("kind").lower().startswith("fig") else "table"
             captions.append((paragraph, kind, _number(match.group("number")), match.group(0)))
+    caption_spans = {
+        p.id: [
+            lines_by_id[i]
+            for i in range(p.first_line, p.last_line + 1)
+            if i in lines_by_id and lines_by_id[i].page == p.page
+        ]
+        for p in paragraphs
+        if p.kind == "caption"
+    }
+    caption_rects = {
+        key: (
+            min(ln.x0 for ln in span),
+            min(ln.y0 for ln in span),
+            max(ln.x1 for ln in span),
+            max(ln.y1 for ln in span),
+        )
+        for key, span in caption_spans.items()
+    }
+    text_barriers: dict[int, list[Rect]] = {}
+    for p in paragraphs:
+        if p.kind not in ("text", "heading"):
+            continue
+        for i in range(p.first_line, p.last_line + 1):
+            ln = lines_by_id.get(i)
+            if ln is not None and (
+                p.kind == "heading" or (not metrics.smaller(ln.size) and len(PROSE_WORD_RE.findall(ln.text)) >= 3)
+            ):
+                text_barriers.setdefault(ln.page, []).append((ln.x0, ln.y0, ln.x1, ln.y1))
     blocks = [(line, match) for page in pages for line in page.body_lines() if (match := BLOCK_RE.match(line.text))]
 
     caption_pages = {lines_by_id[p.first_line].page for p, _, _, _ in captions}
@@ -917,7 +1077,7 @@ def build_assets(
         return text_blocks.get((page.width, page.height), (0.0, page.height))
 
     def caption_lines(number: int) -> list[Line]:
-        return [line for line in page_by_number[number].body_lines() if CAPTION_RE.match(line.text)]
+        return [ln for span in caption_spans.values() for ln in span if ln.page == number]
 
     assets: dict[tuple[int, str], Asset] = {}
 
@@ -933,21 +1093,27 @@ def build_assets(
 
     for paragraph, kind, number, label in captions:
         first = lines_by_id[paragraph.first_line]
-        span = [
-            lines_by_id[i]
-            for i in range(paragraph.first_line, paragraph.last_line + 1)
-            if i in lines_by_id and lines_by_id[i].page == first.page
-        ]
-        caption_rect = (min(ln.x0 for ln in span), first.y0, max(ln.x1 for ln in span), max(ln.y1 for ln in span))
+        span = caption_spans[paragraph.id]
+        caption_rect = caption_rects[paragraph.id]
         page = page_by_number[first.page]
         found = geometry[first.page]
         if kind == "figure":
-            options = [("caption+image", "high", r) for r in found.images]
+            options = [("caption+image", "medium", r) for r in found.images]
             options += [("caption+drawing", "medium", r) for r in found.shapes]
+            choice = _figure_region(
+                caption_rect,
+                options,
+                page,
+                first.column,
+                metrics,
+                [caption_rects[key] for key, lines in caption_spans.items() if lines[0].page == first.page],
+                text_barriers.get(first.page, []),
+                caption_lines(first.page),
+            )
         else:
             options = [("caption+table", "high", r) for r in found.tables]
             options += [("caption+rules", "medium", r) for r in found.ruled]
-        choice = _nearest(caption_rect, options, _column_range(page, first.column), metrics)
+            choice = _nearest(caption_rect, options, _column_range(page, first.column), metrics)
         method, confidence, bbox = choice if choice else ("caption", "low", None)
         content, content_format = "", "text"
         ends = first.page
