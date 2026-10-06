@@ -1,5 +1,5 @@
 """One explicit image question, one completion, and one atomic diagnostic record."""
-
+# ruff: noqa: E501
 from __future__ import annotations
 
 import asyncio
@@ -40,7 +40,8 @@ Answer in concise English using:
 - Relevant statements from supplied source context, if any.
 - Supported physical interpretation and remaining uncertainty.
 
-Omit irrelevant details. Do not invent values or request additional tools."""
+Omit irrelevant details. Do not invent values or request additional tools.
+"""
 
 
 # A process-wide gate independent of event-loop lifetimes. Nonblocking acquisition

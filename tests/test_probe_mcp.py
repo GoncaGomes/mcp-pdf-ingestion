@@ -282,9 +282,7 @@ class ProbeTests(unittest.TestCase):
         results = [
             status
             if isinstance(status, Exception)
-            else response(
-                {"visual": {"status": status, "reason": f"attempt-{i}", "inspection_id": f"inspection-{i}"}}
-            )
+            else response({"visual": {"status": status, "reason": f"attempt-{i}", "inspection_id": f"inspection-{i}"}})
             for i, status in enumerate(statuses)
         ]
 
@@ -307,7 +305,9 @@ class ProbeTests(unittest.TestCase):
             mock.patch.object(MCPServerStdio, "connect", new_callable=mock.AsyncMock),
             mock.patch.object(MCPServerStdio, "cleanup", new_callable=mock.AsyncMock) as cleanup,
             mock.patch.object(
-                MCPServerStdio, "list_tools", new_callable=mock.AsyncMock,
+                MCPServerStdio,
+                "list_tools",
+                new_callable=mock.AsyncMock,
                 return_value=[SimpleNamespace(name=n) for n in probe.TOOLS],
             ),
             mock.patch.object(MCPServerStdio, "call_tool", new_callable=mock.AsyncMock, side_effect=results) as call,

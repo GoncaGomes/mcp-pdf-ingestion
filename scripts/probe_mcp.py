@@ -272,10 +272,14 @@ async def agent(args, env, report):
             )
             report["final_answer"] = "" if result.final_output is None else str(result.final_output)
             print(redact(report["final_answer"], env))
-    return bool(report["final_answer"].strip()) and report["visual_succeeded"] and not any(
-        call["outcome"] == "error"
-        or call.get("visual", {}).get("status", "success") not in ("success", "not_requested", "unavailable")
-        for call in report["calls"]
+    return (
+        bool(report["final_answer"].strip())
+        and report["visual_succeeded"]
+        and not any(
+            call["outcome"] == "error"
+            or call.get("visual", {}).get("status", "success") not in ("success", "not_requested", "unavailable")
+            for call in report["calls"]
+        )
     )
 
 
